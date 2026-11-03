@@ -1,0 +1,53 @@
+## ===== Visual Studio / 构建产物 =====
+*.suo
+*.user
+*.userosscache
+.vs/
+[Dd]ebug/
+[Rr]elease/
+x64/
+x86/
+[Bb]in/
+[Oo]bj/
+[Ll]og/
+*.pdb
+*.ilk
+*.obj
+*.tmp
+*.cachefile
+*.VC.db
+
+## ===== 单 EXE 打包产物与运行时原生 DLL（启动时由壳层从嵌入资源提取）=====
+*.exe
+*.dll
+WebView2Loader.dll
+
+## ===== 运行时生成物（不入库，交付/运行时自动生成）=====
+运行组件/
+WebView2缓存/
+WebView2缓存-panel/
+app_log.log
+config.ini
+manual-holidays.json
+
+## ===== 本地辅助区整体不入库（交付版本/备份/工具脚本/勘察记录）=====
+本地辅助/
+
+## ===== 本地工作文档（不入库、不上线）=====
+AGENTS.md
+项目结构说明.md
+方案设计_*.md
+本地辅助/勘察记录/
+
+## ===== 备份文件不入库 =====
+.v*bak/
+*.v*bak
+备份/
+备份文件夹/
+
+## ===== 图标转换中间素材（app.ico 为最终入库产物，源图不入库）=====
+**/icon-source.png
+
+## ===== 本文件自身（沿用现有项目口径，防 git add -A 误加回）=====
+.gitignore
+.gitattributes
