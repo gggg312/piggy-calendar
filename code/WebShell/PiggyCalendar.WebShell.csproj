@@ -1,0 +1,196 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="15.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <Import Project="$(MSBuildExtensionsPath)\$(MSBuildToolsVersion)\Microsoft.Common.props" Condition="Exists('$(MSBuildExtensionsPath)\$(MSBuildToolsVersion)\Microsoft.Common.props')" />
+  <PropertyGroup>
+    <Configuration Condition=" '$(Configuration)' == '' ">Debug</Configuration>
+    <Platform Condition=" '$(Platform)' == '' ">AnyCPU</Platform>
+    <ProjectGuid>{7C2E9A14-6B3D-4F0A-9C21-1B5E8A37D204}</ProjectGuid>
+    <OutputType>WinExe</OutputType>
+    <RootNamespace>PiggyCalendar.WebShell</RootNamespace>
+    <AssemblyName>PiggyCalendar.WebShell</AssemblyName>
+    <ApplicationIcon>Assets\app.ico</ApplicationIcon>
+    <TargetFrameworkVersion>v4.7.2</TargetFrameworkVersion>
+    <FileAlignment>512</FileAlignment>
+    <TargetFrameworkProfile />
+    <AutoGenerateBindingRedirects>true</AutoGenerateBindingRedirects>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <RuntimeIdentifiers>win</RuntimeIdentifiers>
+  </PropertyGroup>
+  <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Debug|AnyCPU' ">
+    <PlatformTarget>AnyCPU</PlatformTarget>
+    <DebugSymbols>true</DebugSymbols>
+    <DebugType>full</DebugType>
+    <Optimize>false</Optimize>
+    <OutputPath>bin\Debug\</OutputPath>
+    <DefineConstants>DEBUG;TRACE</DefineConstants>
+    <ErrorReport>prompt</ErrorReport>
+    <WarningLevel>4</WarningLevel>
+    <Prefer32Bit>false</Prefer32Bit>
+  </PropertyGroup>
+  <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Release|AnyCPU' ">
+    <PlatformTarget>AnyCPU</PlatformTarget>
+    <DebugType>pdbonly</DebugType>
+    <Optimize>true</Optimize>
+    <OutputPath>bin\Release\</OutputPath>
+    <DefineConstants>TRACE</DefineConstants>
+    <ErrorReport>prompt</ErrorReport>
+    <WarningLevel>4</WarningLevel>
+    <Prefer32Bit>false</Prefer32Bit>
+  </PropertyGroup>
+  <ItemGroup>
+    <Reference Include="PresentationCore" />
+    <Reference Include="PresentationFramework" />
+    <Reference Include="WindowsBase" />
+    <Reference Include="System.Xaml" />
+    <Reference Include="System" />
+    <Reference Include="System.Core" />
+    <Reference Include="System.Drawing" />
+    <Reference Include="System.Windows.Forms" />
+    <Reference Include="System.Web.Extensions" />
+    <Reference Include="System.Net.Http" />
+  </ItemGroup>
+  <ItemGroup>
+    <ApplicationDefinition Include="App.xaml">
+      <Generator>MSBuild:Compile</Generator>
+      <SubType>Designer</SubType>
+    </ApplicationDefinition>
+    <Page Include="CalendarPopupWindow.xaml">
+      <Generator>MSBuild:Compile</Generator>
+      <SubType>Designer</SubType>
+    </Page>
+    <Page Include="PanelHostWindow.xaml">
+      <Generator>MSBuild:Compile</Generator>
+      <SubType>Designer</SubType>
+    </Page>
+    <Page Include="ShutdownRemindWindow.xaml">
+      <Generator>MSBuild:Compile</Generator>
+      <SubType>Designer</SubType>
+    </Page>
+    <Page Include="ReminderRemindWindow.xaml">
+      <Generator>MSBuild:Compile</Generator>
+      <SubType>Designer</SubType>
+    </Page>
+  </ItemGroup>
+  <ItemGroup>
+    <Compile Include="App.xaml.cs">
+      <DependentUpon>App.xaml</DependentUpon>
+      <SubType>Code</SubType>
+    </Compile>
+    <Compile Include="CalendarPopupWindow.xaml.cs">
+      <DependentUpon>CalendarPopupWindow.xaml</DependentUpon>
+      <SubType>Code</SubType>
+    </Compile>
+    <Compile Include="PanelHostWindow.xaml.cs">
+      <DependentUpon>PanelHostWindow.xaml</DependentUpon>
+      <SubType>Code</SubType>
+    </Compile>
+    <Compile Include="ShutdownRemindWindow.xaml.cs">
+      <DependentUpon>ShutdownRemindWindow.xaml</DependentUpon>
+      <SubType>Code</SubType>
+    </Compile>
+    <Compile Include="ReminderRemindWindow.xaml.cs">
+      <DependentUpon>ReminderRemindWindow.xaml</DependentUpon>
+      <SubType>Code</SubType>
+    </Compile>
+    <Compile Include="Services\AppLog.cs" />
+    <Compile Include="Services\AppConfig.cs" />
+    <Compile Include="Services\IniFileHelper.cs" />
+    <Compile Include="Services\AtomicFile.cs" />
+    <Compile Include="Services\WebView2LoaderBootstrap.cs" />
+    <Compile Include="Services\WebRootProvider.cs" />
+    <Compile Include="Services\CSharpBridge.cs" />
+    <Compile Include="Services\CSharpBridge.Holidays.cs" />
+    <Compile Include="Services\CSharpBridge.Sync.cs" />
+    <Compile Include="Services\CSharpBridge.Shutdown.cs" />
+    <Compile Include="Services\CSharpBridge.Reminder.cs" />
+    <Compile Include="Services\CSharpBridge.Appearance.cs" />
+    <Compile Include="Services\CSharpBridge.ExtraDisplay.cs" />
+    <Compile Include="Services\AutoShutdownService.cs" />
+    <Compile Include="Services\ReminderService.cs" />
+    <Compile Include="Services\HolidaySync\SyncSource.cs" />
+    <Compile Include="Services\HolidaySync\Adapters.cs" />
+    <Compile Include="Services\HolidaySync\HolidaySyncService.cs" />
+    <Compile Include="Services\TrayService.cs" />
+    <Compile Include="Services\AutoStartService.cs" />
+    <Compile Include="Properties\AssemblyInfo.cs" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Web.WebView2" GeneratePathProperty="true">
+      <Version>1.0.2903.40</Version>
+    </PackageReference>
+    <PackageReference Include="Costura.Fody">
+      <Version>6.2.0</Version>
+      <PrivateAssets>all</PrivateAssets>
+    </PackageReference>
+  </ItemGroup>
+  <ItemGroup>
+    <Resource Include="Assets\app.ico" />
+    <!-- WebView2Loader.dll（原生，单 EXE 打包：启动时提取到 EXE 同目录，须先于 EnsureCoreWebView2Async） -->
+    <EmbeddedResource Include="$(PkgMicrosoft_Web_WebView2)\build\native\x64\WebView2Loader.dll">
+      <Link>assets\WebView2Loader-x64.dll</Link>
+      <LogicalName>PiggyCalendar.WebShell.assets.WebView2Loader-x64.dll</LogicalName>
+    </EmbeddedResource>
+    <!-- v0.1.6.94：同包内置 x86 loader，AnyCPU 单 EXE 在 32 位系统上以 32 位进程运行 -->
+    <EmbeddedResource Include="$(PkgMicrosoft_Web_WebView2)\build\native\x86\WebView2Loader.dll">
+      <Link>assets\WebView2Loader-x86.dll</Link>
+      <LogicalName>PiggyCalendar.WebShell.assets.WebView2Loader-x86.dll</LogicalName>
+    </EmbeddedResource>
+    <!-- WebUI 前端静态资源（启动时若 EXE 同目录无 WebUI 则提取；开发态直接映射源码目录） -->
+    <EmbeddedResource Include="..\WebUI\prototype\index.html">
+      <LogicalName>PiggyCalendar.WebShell.webui.index.html</LogicalName>
+    </EmbeddedResource>
+    <EmbeddedResource Include="..\WebUI\prototype\bridge.js">
+      <LogicalName>PiggyCalendar.WebShell.webui.bridge.js</LogicalName>
+    </EmbeddedResource>
+    <EmbeddedResource Include="..\WebUI\prototype\lib\vue.global.prod.js">
+      <LogicalName>PiggyCalendar.WebShell.webui.lib.vue.global.prod.js</LogicalName>
+    </EmbeddedResource>
+    <EmbeddedResource Include="..\WebUI\prototype\lib\element-plus.min.js">
+      <LogicalName>PiggyCalendar.WebShell.webui.lib.element-plus.min.js</LogicalName>
+    </EmbeddedResource>
+    <EmbeddedResource Include="..\WebUI\prototype\lib\element-plus.css">
+      <LogicalName>PiggyCalendar.WebShell.webui.lib.element-plus.css</LogicalName>
+    </EmbeddedResource>
+    <EmbeddedResource Include="..\WebUI\prototype\lib\icons.iife.min.js">
+      <LogicalName>PiggyCalendar.WebShell.webui.lib.icons.iife.min.js</LogicalName>
+    </EmbeddedResource>
+    <EmbeddedResource Include="..\WebUI\prototype\vendor\localforage.min.js">
+      <LogicalName>PiggyCalendar.WebShell.webui.vendor.localforage.min.js</LogicalName>
+    </EmbeddedResource>
+    <!-- v0.1.6.34：补齐单 EXE 所需的前端资源（磁盘无 WebUI 目录时由 WebRootProvider 解压到 运行组件\WebUI\v版本号） -->
+    <EmbeddedResource Include="..\WebUI\prototype\panel.html">
+      <LogicalName>PiggyCalendar.WebShell.webui.panel.html</LogicalName>
+    </EmbeddedResource>
+    <EmbeddedResource Include="..\WebUI\prototype\vendor\lunar.min.js">
+      <LogicalName>PiggyCalendar.WebShell.webui.vendor.lunar.min.js</LogicalName>
+    </EmbeddedResource>
+    <EmbeddedResource Include="..\WebUI\prototype\modules\lunar-service.js">
+      <LogicalName>PiggyCalendar.WebShell.webui.modules.lunar-service.js</LogicalName>
+    </EmbeddedResource>
+    <EmbeddedResource Include="..\WebUI\prototype\modules\sample-holidays-2026.js">
+      <LogicalName>PiggyCalendar.WebShell.webui.modules.sample-holidays-2026.js</LogicalName>
+    </EmbeddedResource>
+    <EmbeddedResource Include="..\WebUI\prototype\modules\sample-holidays-2027.js">
+      <LogicalName>PiggyCalendar.WebShell.webui.modules.sample-holidays-2027.js</LogicalName>
+    </EmbeddedResource>
+    <EmbeddedResource Include="..\WebUI\prototype\modules\manual-store.js">
+      <LogicalName>PiggyCalendar.WebShell.webui.modules.manual-store.js</LogicalName>
+    </EmbeddedResource>
+    <EmbeddedResource Include="..\WebUI\prototype\modules\notice-parser.js">
+      <LogicalName>PiggyCalendar.WebShell.webui.modules.notice-parser.js</LogicalName>
+    </EmbeddedResource>
+    <EmbeddedResource Include="..\WebUI\prototype\modules\date-model.js">
+      <LogicalName>PiggyCalendar.WebShell.webui.modules.date-model.js</LogicalName>
+    </EmbeddedResource>
+    <EmbeddedResource Include="..\WebUI\prototype\modules\panel-store.js">
+      <LogicalName>PiggyCalendar.WebShell.webui.modules.panel-store.js</LogicalName>
+    </EmbeddedResource>
+    <EmbeddedResource Include="..\WebUI\prototype\assets\app-icon.png">
+      <LogicalName>PiggyCalendar.WebShell.webui.assets.app-icon.png</LogicalName>
+    </EmbeddedResource>
+    <EmbeddedResource Include="..\WebUI\prototype\assets\赞赏码_small.jpg">
+      <LogicalName>PiggyCalendar.WebShell.webui.assets.donate.jpg</LogicalName>
+    </EmbeddedResource>
+  </ItemGroup>
+  <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
+</Project>

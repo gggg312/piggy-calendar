@@ -48,6 +48,21 @@ AGENTS.md
 ## ===== 图标转换中间素材（app.ico 为最终入库产物，源图不入库）=====
 **/icon-source.png
 
+## ===== v1.0.0 上线白名单（2026-11-11）：调试产物与私人物料不入库 =====
+## 判定依据：本地辅助/方案/仓库入库清单_20261111.md（逐文件判定，含排除理由）
+## 前端目录下的调试截图与自检报告
+code/WebUI/prototype/_shots/
+## 脚本化修改留下的临时备份（乱名文件）
+code/WebUI/prototype/*.autofix-backup-*.html
+## 收款码：code 下那份是编译必需资源（csproj EmbeddedResource + 解包 Map 引用），必须入库；
+## 根目录那份仅本地备用，不入库
+/赞赏码*.jpg
+## 本地工作文档：仓库地图与经验档案，不入库、不上线
+目录结构.md
+开发经验总结.md
+## 更新日志：按用户口径不入库（发布说明改写在 Release 页正文）
+/CHANGELOG.md
+
 ## ===== 本文件自身（沿用现有项目口径，防 git add -A 误加回）=====
 .gitignore
 .gitattributes

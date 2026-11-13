@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="utf-8"?>
+<assembly manifestVersion="1.0" xmlns="urn:schemas-microsoft-com:asm.v1">
+  <!-- 程序集标识：此 version 仅作 SxS 标识，不参与产品版本号，也不被 WPF 读取；
+       原值 0.1.6.15 是历史遗留的陈旧串，已固定为 1.0.0.0，避免每版都要同步（v0.1.6.97） -->
+  <assemblyIdentity version="1.0.0.0" name="PiggyCalendar.WebShell" />
+
+  <!-- DPI 感知：PerMonitorV2（.NET Framework 4.7.2 WPF 支持），小组件窗坐标按物理像素计算 -->
+  <application xmlns="urn:schemas-microsoft-com:asm.v3">
+    <windowsSettings>
+      <dpiAwareness xmlns="http://schemas.microsoft.com/SMI/2016/WindowsSettings">PerMonitorV2</dpiAwareness>
+    </windowsSettings>
+  </application>
+
+  <!-- 操作系统兼容声明：Win7 / Win8 / Win8.1 / Win10-11（Win10 与 Win11 共用 GUID） -->
+  <!-- 修正记录（v0.1.6.94）：原文件此处只写了 Vista 的 GUID {e2011457-...}，注释却称"Windows 10 兼容声明"，
+       等于从未声明 Win10/11，系统会按 Vista 兼容层处理（版本类 API 返回旧值）。 -->
+  <compatibility xmlns="urn:schemas-microsoft-com:compatibility.v1">
+    <application>
+      <!-- Windows 7 -->
+      <supportedOS Id="{35138b9a-5d96-4fbd-8e2d-a2440225f93a}" />
+      <!-- Windows 8 -->
+      <supportedOS Id="{4a2f28e3-53b9-4441-ba9c-d69d4a4a6e38}" />
+      <!-- Windows 8.1 -->
+      <supportedOS Id="{1f676c76-80e1-4239-95bb-83d0f6d0da78}" />
+      <!-- Windows 10 / Windows 11 -->
+      <supportedOS Id="{8e0f7a12-bfb3-4fe8-b9a5-48fd50a15a9a}" />
+    </application>
+  </compatibility>
+</assembly>

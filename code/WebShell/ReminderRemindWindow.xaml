@@ -1,0 +1,100 @@
+<Window x:Class="PiggyCalendar.WebShell.ReminderRemindWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="提醒"
+        Width="400" Height="252"
+        WindowStyle="None" ResizeMode="NoResize" ShowInTaskbar="False"
+        Topmost="True" WindowStartupLocation="Manual"
+        Background="#1B1E24" Foreground="#F2F3F5"
+        BorderBrush="#2A2E37" BorderThickness="1">
+    <Window.Resources>
+        <!-- 紫底主按钮：右「稍后 5 分钟提醒」，hover 提亮 -->
+        <Style x:Key="PrimaryBtn" TargetType="Button">
+            <Setter Property="Background" Value="#7C6FF0" />
+            <Setter Property="Foreground" Value="#FFFFFF" />
+            <Setter Property="BorderBrush" Value="#7C6FF0" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="FontSize" Value="14" />
+            <Setter Property="Cursor" Value="Hand" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="bd" Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}"
+                                CornerRadius="6">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" />
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="bd" Property="Background" Value="#8E83F5" />
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter TargetName="bd" Property="Background" Value="#6A5FD8" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+        <!-- 紫描边按钮：左「我知道了」，hover 淡紫底 -->
+        <Style x:Key="OutlineBtn" TargetType="Button">
+            <Setter Property="Background" Value="#1B1E24" />
+            <Setter Property="Foreground" Value="#7C6FF0" />
+            <Setter Property="BorderBrush" Value="#7C6FF0" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="FontSize" Value="14" />
+            <Setter Property="Cursor" Value="Hand" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="bd" Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}"
+                                CornerRadius="6">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" />
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="bd" Property="Background" Value="#2A2436" />
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter TargetName="bd" Property="Background" Value="#221D2C" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+    </Window.Resources>
+
+    <!-- 提醒到点弹窗（v0.1.6.24）：置顶、小组件所在屏幕居中、系统默认提示音（sound 开启时）。
+         布局：标题在上，中间文字区加大、长文自适应换行并竖直居中；按钮下移贴近底部。
+         左「我知道了」（紫描边，hover 淡紫底）/ 右「稍后 5 分钟提醒」（紫底，hover 提亮）。 -->
+    <Grid Margin="26,16,26,20">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <!-- 标题（固定「提醒」） -->
+        <TextBlock Grid.Row="0" Text="提醒" FontSize="17" FontWeight="SemiBold"
+                   Foreground="#FFFFFF" HorizontalAlignment="Center" Margin="0,0,0,6" />
+
+        <!-- 提醒文字（缺省只显示「提醒」；加大文字区、竖直居中、长文自适应换行） -->
+        <TextBlock Grid.Row="1" x:Name="BodyText" TextWrapping="Wrap" FontSize="15"
+                   Foreground="#B6BCC9" HorizontalAlignment="Center" TextAlignment="Center"
+                   VerticalAlignment="Center" MaxWidth="340" Margin="0,4,0,6" />
+
+        <!-- 按钮行（下移贴近底部）：左描边「我知道了」/ 右紫底「稍后 5 分钟提醒」 -->
+        <StackPanel Grid.Row="2" Orientation="Horizontal" HorizontalAlignment="Center" Margin="0,8,0,0">
+            <Button x:Name="OkBtn" Style="{StaticResource OutlineBtn}" Width="150" Height="44" Margin="0,0,12,0"
+                    Content="我知道了" Click="Ok_Click"
+                    ToolTip="单次提醒完成即移除；周期提醒今日不再弹" />
+            <Button x:Name="PostponeBtn" Style="{StaticResource PrimaryBtn}" Width="150" Height="44"
+                    Content="稍后 5 分钟提醒" Click="Postpone_Click"
+                    ToolTip="5 分钟后再次提醒（单次与周期均生效）" />
+        </StackPanel>
+    </Grid>
+</Window>

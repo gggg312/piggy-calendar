@@ -9,7 +9,7 @@
 | 名称 | 版本 | 许可证 | 用途 | 状态 | 备注 |
 |---|---|---|---|---|---|
 | Vue.js | 3.x 全局生产构建 | MIT | 前端视图框架 | 已引入 | 本地 `lib/vue.global.prod.js` 打包，不使用 npm 构建链 |
-| Element Plus | 本地打包版 | MIT | 前端 UI 组件库 | 已引入 | 本地 `lib/element-plus.min.js` / `element-plus.css` |
+| Element Plus | v2.7.8（本地打包） | MIT | 前端 UI 组件库 | 已引入 | 本地 `lib/element-plus.min.js` / `element-plus.css` |
 | Element Plus Icons | 本地打包版 | MIT | 图标 | 已引入 | 本地 `lib/icons.iife.min.js` |
 | localforage | 本地打包版 | MIT | 浏览器端本地键值存储备用 | 已引入 | 本地 `vendor/localforage.min.js`；M0-6 定稿后不再用于在线节假日缓存，手动节假日本地持久化留 M0-8 评估 |
 

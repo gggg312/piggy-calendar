@@ -1,0 +1,46 @@
+<Window x:Class="PiggyCalendar.WebShell.ShutdownRemindWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="自动关机提醒"
+        Width="400" Height="216"
+        WindowStyle="None" ResizeMode="NoResize" ShowInTaskbar="False"
+        Topmost="True" WindowStartupLocation="Manual"
+        Background="#1B1E24" Foreground="#F2F3F5"
+        BorderBrush="#2A2E37" BorderThickness="1">
+    <!-- 关机前提醒弹窗（v0.1.6.10，替代托盘气泡）：置顶、小组件所在屏幕居中、实时倒计时。
+         两按钮：①确认并关闭(关机照常) ②取消本次自动关机(仅跳过本次，保留周期开关)。样式沿用深色 token + 主题色 #7C6FF0。 -->
+    <Grid Margin="22,18">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <!-- 标题 -->
+        <TextBlock Grid.Row="0" Text="自动关机提醒" FontSize="17" FontWeight="SemiBold"
+                   Foreground="#FFFFFF" HorizontalAlignment="Center" Margin="0,0,0,6" />
+
+        <!-- 说明 -->
+        <TextBlock Grid.Row="1" Text="距自动关机还有" FontSize="13"
+                   Foreground="#B6BCC9" HorizontalAlignment="Center" Margin="0,0,0,2" />
+
+        <!-- 倒计时 -->
+        <TextBlock Grid.Row="2" x:Name="CountdownText" FontSize="34" FontWeight="Bold"
+                   Foreground="#7C6FF0" HorizontalAlignment="Center"
+                   FontFamily="Microsoft YaHei UI" Margin="0,2,0,14" />
+
+        <!-- 按钮行 -->
+        <StackPanel Grid.Row="3" Orientation="Horizontal" HorizontalAlignment="Center">
+            <Button x:Name="ConfirmBtn" Width="158" Height="44" Margin="0,0,12,0"
+                    Content="确认并关闭" FontSize="14" Foreground="#FFFFFF"
+                    Background="#7C6FF0" BorderBrush="#7C6FF0" Cursor="Hand"
+                    Click="Confirm_Click" ToolTip="关闭弹窗，关机照常执行" />
+            <Button x:Name="CancelOnceBtn" Width="158" Height="44"
+                    Content="取消本次自动关机" FontSize="14" Foreground="#FFFFFF"
+                    Background="#D43B34" BorderBrush="#D43B34"
+                    Cursor="Hand" Click="CancelOnce_Click"
+                    ToolTip="仅跳过本次关机，到点不关机，下个周期照常排程" />
+        </StackPanel>
+    </Grid>
+</Window>

@@ -1,0 +1,2219 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<script>window.__pm=[];window.__pm.push(["t0",Math.round(performance.now())]);</script>
+<meta charset="UTF-8">
+<title>小猪日历</title>
+<link rel="stylesheet" href="lib/element-plus.css">
+<script src="lib/vue.global.prod.js"></script>
+<script src="lib/element-plus.min.js"></script>
+<script src="bridge.js"></script>
+<script>
+/* 前端 JS 全局错误 / 未处理 Promise 拒绝 → 写入壳侧 app_log.log（经桥 LogLine） */
+window.addEventListener('error', function (e) {
+  try { if (window.Bridge && window.Bridge.invoke) window.Bridge.invoke('LogLine', '[JS-ERROR] ' + (e.message || '') + ' @' + (e.filename || '') + ':' + e.lineno); } catch (_e) {}
+});
+window.addEventListener('unhandledrejection', function (e) {
+  try { if (window.Bridge && window.Bridge.invoke) { var r = e.reason; window.Bridge.invoke('LogLine', '[JS-PROMISE] ' + (r && r.message ? r.message : String(r))); } } catch (_e) {}
+});
+</script>
+<script src="vendor/localforage.min.js"></script>
+<script src="vendor/lunar.min.js"></script>
+<script src="modules/lunar-service.js"></script>
+<script src="modules/sample-holidays-2026.js"></script>
+<script src="modules/sample-holidays-2027.js"></script>
+<script src="modules/manual-store.js"></script>
+<script src="modules/notice-parser.js"></script>
+<script src="modules/date-model.js"></script>
+<style>
+/* ============ M0-7：时间区 + 日历网格 + 农历/传统节日/手动节假日，五类整圆配色与休/班角标 ============ */
+:root{
+  --primary:#7C6FF0;
+  --text:#FFFFFF; --text-2:#E5E7EB; --text-3:#D1D5DB; --text-muted:#9CA3AF;
+  --panel-rgb:31,35,41; --panel-alpha:1; /* 面板背景 rgb 与 alpha 分离，alpha 由前端按透明度动态设（v0.1.6.8） */
+  --drag-solid:#3A3F47; /* v0.1.6.30 拖动降级底色（Acrylic 关闭时用，深色系实测 61,66,75 观感） */
+  --hover-bg:rgba(255,255,255,0.06);
+  /* v0.1.6.62 通用悬浮态（规范见 AGENTS §3.18）：背景加深 + 主体加粗，两档尺寸强度。
+     lg = 32/38px 大控件（日期数字块、底部按钮），sm = 20/26px 小控件（翻月、锁/隐藏、卡片 ×）。
+     v0.1.6.63（用户定稿）：撤掉内描边 ——「淡紫底不应该有边框」，边界只靠填充与壁纸的对比，不再加环。 */
+  --hv-fill:rgba(124,111,240,.30);
+  --hv-fill-sm:rgba(124,111,240,.20);
+  --c-rm-dot:#8B7FF5;        /* 提醒标记色（日期紫点 + 图标角标），由设置页「提醒标记色」下发覆盖 */
+    /* 倒计时条分段缝：跟随图标前景色（深色主题图标白 → 缝白） */
+  --as-active-text:#cbc3ff;
+  --grip:#ffffff;
+  --shadow:rgba(0,0,0,0.25);
+  --border:rgba(255,255,255,0.08);
+  /* v0.1.6.26 毛毛玻璃形态：色系 × 质感(纯色/毛毛玻璃) × 透明度；纯色回退早期边框线，毛毛玻璃加模糊/增色/亮边/折射 */
+  --plain-border:rgba(255,255,255,0.08);
+  --glass-blur:16px; --glass-saturate:1.6;
+  --edge-line:rgba(255,255,255,0.14);
+  --rim-lt:rgba(255,255,255,0.32); --rim-rb:rgba(255,255,255,0.04);
+  --div:rgba(255,255,255,0.16); /* v0.1.6.28 上下分区线 */
+  /* 五类日期配色（深底，M0-7 初值，验收后微调） */
+  --c-workday:#FFFFFF;
+  --c-weekend:#3FA942;
+  --c-holiday:#3D8BFF;
+  --c-adjust:#E0524D;
+  --c-today:#7C6FF0;
+  --c-holiday-text:#6CA8FF;
+  --c-adjust-text:#FF7A73;
+  --el-color-primary:#7C6FF0;
+  --el-component-size:30px; --el-border-radius-base:6px;
+  --el-font-size-base:12.5px;
+  --el-font-family:'Microsoft YaHei UI','Microsoft YaHei','微软雅黑','PingFang SC','Helvetica Neue',Arial,sans-serif;
+}
+*{box-sizing:border-box}
+[v-cloak]{display:none}
+html,body{margin:0;height:100%;overflow:hidden;background:transparent}
+body{font-family:'Microsoft YaHei UI','Microsoft YaHei','微软雅黑','PingFang SC','Helvetica Neue',Arial,sans-serif;
+  font-size:12.5px;color:var(--text);background:transparent;-webkit-font-smoothing:antialiased}
+
+#app{height:100%;display:flex;flex-direction:column;align-items:center;justify-content:center;background:transparent;overflow:hidden;position:relative}
+/* v0.1.6.9：窗口透明后由前端统一控制面板背景（主题色 + 透明度实时，圆角 14 匹配窗口），内容在其上不透明 */
+.panel-bg{position:absolute;inset:0;background:rgba(var(--panel-rgb), var(--panel-alpha, 1));border-radius:14px;pointer-events:none;z-index:0;
+  border:1px solid var(--plain-border)} /* v0.1.6.26 纯色卡回退早期边框线 */
+/* v0.1.6.26 毛玻璃形态：模糊+增色+叠白+亮边+折射（rim 左上亮右下暗） */
+.panel-bg.glass{
+  -webkit-backdrop-filter:blur(var(--glass-blur)) saturate(var(--glass-saturate));
+  backdrop-filter:blur(var(--glass-blur)) saturate(var(--glass-saturate));
+  border:1px solid var(--edge-line);
+  box-shadow:inset 1.5px 1.5px 0 var(--rim-lt), inset -1.5px -1.5px 0 var(--rim-rb);
+}
+/* v0.1.6.27 金属（不锈钢）质感：极细发丝（0.5px 亮/0.5px 暗、2px 周期、极低对比）+ 斜向柔光 + 窄亮边/窄暗边；
+   固定不透明（不参与透明度滑块）。深色=暗钢（此处为 :root 默认深色），浅色=亮银见 html[data-theme="light"] 覆盖 */
+.panel-bg.metal{
+  background:
+    repeating-linear-gradient(90deg, rgba(255,255,255,0.042) 0 0.5px, rgba(0,0,0,0.020) 0.5px 1px, transparent 1px 2px),
+    linear-gradient(180deg, rgba(255,255,255,0.14) 0%, rgba(255,255,255,0.035) 30%, rgba(255,255,255,0) 58%, rgba(0,0,0,0.24) 84%, rgba(0,0,0,0.38) 100%),
+    linear-gradient(104deg, #4a4f56 0%, #61666d 17%, #34383d 43%, #474c53 61%, #282c30 84%, #1e2226 100%);
+  border:1px solid rgba(255,255,255,0.22);
+  box-shadow:inset 0 1px 0 rgba(255,255,255,0.40), inset 0 -1px 0 rgba(0,0,0,0.50), 0 12px 28px var(--shadow);
+  overflow:hidden;
+}
+.panel-bg.metal::before{content:"";position:absolute;inset:0;border-radius:13px;pointer-events:none;
+  background:linear-gradient(108deg, rgba(255,255,255,0.10) 0%, rgba(255,255,255,0.03) 32%, rgba(255,255,255,0) 56%, rgba(0,0,0,0.30) 100%)}
+.panel-bg.metal::after{content:"";position:absolute;left:-25%;right:-25%;top:10%;height:30%;pointer-events:none;
+  background:linear-gradient(100deg, transparent 0%, rgba(255,255,255,0.10) 36%, rgba(255,255,255,0.26) 52%, rgba(255,255,255,0.09) 68%, transparent 100%);
+  transform:rotate(-2.5deg);filter:blur(14px)}
+/* v0.1.6.28 毛毛玻璃：仅 blur + saturate + 亮边 + rim，不再自造任何晕染色块（直接透出用户壁纸） */
+/* v0.1.6.30 拖动降级：拖动期间系统 Acrylic 被撤掉（否则 DWM 每帧重算模糊会严重滞后），
+   这里补一层实心底色把窗口盖住；松手立即恢复模糊与正常面板背景。
+   v0.1.6.31：只对毛玻璃生效——纯色/金属本来就靠 CSS 自身底色，拖动不需要也不应该变实心 */
+.panel-bg.glass.dragging{
+  background:var(--drag-solid);
+  border-color:var(--drag-solid);
+  box-shadow:none;
+  -webkit-backdrop-filter:none;
+  backdrop-filter:none;
+}
+
+/* 全局禁止文本选中：拖动窗口/缩放时不再高亮时钟、日期、网格文字 */
+body, #app, .stage, .stage *{user-select:none;-webkit-user-select:none}
+
+/* ---------- stage 基准画布：340×542 固定排版，由 ResizeObserver 计算 k 整体 scale ---------- */
+.stage{width:340px;height:542px;flex:none;display:flex;flex-direction:column;position:relative;transform-origin:center center}
+
+/* ---------- 顶部把手：判定区与线条同宽 52px、判定带高 24px，白线垂直居中；默认隐藏，鼠标进入窗口才显现 ---------- */
+.app-top{height:24px;display:flex;justify-content:center;align-items:center}
+.drag-zone{position:relative;width:52px;height:24px;display:flex;align-items:center;justify-content:center;cursor:grab}
+.grip{width:52px;height:4px;border-radius:4px;background:var(--grip);opacity:0;pointer-events:none}
+#app:hover .grip{opacity:1}
+.drag-zone:active{cursor:grabbing}
+
+/* ---------- 8 向缩放手柄（固定在客户区边缘，不随 stage 缩放偏移；经桥 BeginResize 等比缩放） ---------- */
+.resize-layer{position:absolute;inset:0;pointer-events:none;z-index:20}
+.rz{position:absolute;pointer-events:auto}
+.rz-l{left:0;top:12px;bottom:12px;width:8px;cursor:ew-resize}
+.rz-r{right:0;top:12px;bottom:12px;width:8px;cursor:ew-resize}
+.rz-t{left:26px;right:26px;top:0;height:10px;cursor:ns-resize}
+.rz-b{left:10px;right:10px;bottom:0;height:10px;cursor:ns-resize}
+.rz-lt{left:0;top:0;width:12px;height:12px;cursor:nwse-resize}
+.rz-rt{right:0;top:0;width:12px;height:12px;cursor:nesw-resize}
+.rz-lb{left:0;bottom:0;width:12px;height:12px;cursor:nesw-resize}
+.rz-rb{right:0;bottom:0;width:12px;height:12px;cursor:nwse-resize}
+
+/* ---------- 时间区（纯展示，不参与窗口拖动） ---------- */
+.time-zone{padding:6px 18px 0}
+.clock{font-size:38px;font-weight:600;line-height:1.15;letter-spacing:1px;color:var(--text);font-variant-numeric:tabular-nums}
+.date-line{margin-top:5px;font-size:13px;color:var(--text-2);letter-spacing:0.5px}
+
+/* v0.1.6.19：小组件首次加载分块错开入场（视频：别整块一起淡入，拆成几部分依次错开） */
+@keyframes pcFadeUp{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+.clock,.cal-card,.bottom-zone{animation:pcFadeUp .38s ease-out both}
+.clock{animation-delay:0s}
+.cal-card{animation-delay:.12s}
+.bottom-zone{animation-delay:.24s}
+@media (prefers-reduced-motion: reduce){.clock,.cal-card,.bottom-zone{animation:none}}
+
+/* ---------- 日历面板 ---------- */
+/* v0.1.6.28：单卡上下分区——月历不再有自己的底色/圆角/阴影（去掉卡套卡），与底部图标栏只用一条 1px 分隔线分区 */
+/* v0.1.6.31：底部留 15px——让最后一行农历与分隔线的留白，等于顶部「日期数字到星期」的视觉留白
+   （星期格 24 高文字居中留 6 + 网格首行 paddingTop 2 + 数字字形在 32 圆内上留白 9 ≈ 17）；
+   .bottom-zone 是 flex:1，会吸收这段留白，图标上下留白随之从 16.5 收到 ~10.4 且保持相等 */
+.cal-card{display:flex;flex-direction:column;padding:8px 12px 13px} /* v0.1.6.64：底部 15→13，把 2px 让给底部工具区下边距 */
+
+.cal-head{display:flex;align-items:center;height:34px;padding:0 6px}
+/* v0.1.6.77：标题改为 flex:1 居中（箭头分置左右后不再需要定宽占位，月份字符数变化由居中吸收） */
+.cal-title{font-size:14px;font-weight:600;color:var(--text);flex:1;text-align:center;white-space:nowrap;overflow:hidden}
+.cal-right{display:flex;align-items:center;gap:4px;flex:none}
+.nav-btn{width:26px;height:26px;border:none;background:transparent;color:var(--text-2);border-radius:6px;
+  font-size:16px;line-height:1;display:flex;align-items:center;justify-content:center;cursor:pointer}
+/* v0.1.6.62：翻月箭头纳入通用悬浮态（小件档 --hv-fill-sm）；v0.1.6.63 撤掉内描边，只留填充；箭头是字符，加粗走 font-weight */
+.nav-btn:hover{background:var(--hv-fill-sm);color:var(--text);font-weight:600}
+/* v0.1.6.33：返回今日 = 图标按钮（只放图标，reicon Refresh）；紫框 + 淡紫底口径与自动关机开启态一致，边框加流动光吸引点击 */
+.cal-today-btn{position:relative;height:22px;display:inline-flex;align-items:center;justify-content:center;padding:0 8px;
+  font-size:11px;font-family:inherit;white-space:nowrap;
+  border:1.5px solid #a79cff;border-radius:6px;background:rgba(124,111,240,.28);color:#efecff;cursor:pointer}
+.cal-today-btn:hover{background:rgba(124,111,240,.40);color:#FFFFFF}
+/* v0.1.6.54：金属材质是暗钢实底，紫色描边（#7c6ff0）与暗钢亮度接近、对比仅约 2.3:1，24px 小按钮的「形」会糊掉。
+   这里按材质自适应：metal 给一层不受材质影响的实底，紫边仍保留；毛玻璃 / 纯色走上面的提亮口径（边框对比约 3.8:1）。 */
+.stage[data-texture="metal"] .cal-today-btn{background:rgba(0,0,0,.45)}
+.stage[data-texture="metal"] .cal-today-btn:hover{background:rgba(0,0,0,.58)}
+html[data-theme="light"] .cal-today-btn,
+html[data-theme="light"] .cal-today-btn:hover{color:#4a4a8a;background:rgba(124,111,240,.12);border-color:#7c6ff0}
+html[data-theme="light"] .stage[data-texture="metal"] .cal-today-btn,
+html[data-theme="light"] .stage[data-texture="metal"] .cal-today-btn:hover{background:rgba(255,255,255,.82)}
+/* 边框流动光：conic-gradient 角度动画走 mask 挖空的 1.5px 细边；hover 提速、按下暂停、reduced-motion 降级为静态紫框 */
+@property --ct-flow{syntax:'<angle>';initial-value:0deg;inherits:false}
+.cal-today-btn::before{content:'';position:absolute;inset:0;border-radius:inherit;padding:1.5px;pointer-events:none;
+  background:conic-gradient(from var(--ct-flow),rgba(124,111,240,0) 0deg,#c9c3ff 55deg,#7c6ff0 95deg,rgba(124,111,240,0) 175deg,rgba(124,111,240,0) 360deg);
+  -webkit-mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);
+  -webkit-mask-composite:xor;mask-composite:exclude;
+  animation:ct-flow-spin 2.4s linear infinite}
+.cal-today-btn:hover::before{animation-duration:1.2s}
+.cal-today-btn:active::before{animation-play-state:paused}
+@keyframes ct-flow-spin{to{--ct-flow:360deg}}
+@media (prefers-reduced-motion:reduce){
+  .cal-today-btn::before{animation:none;background:rgba(201,195,255,.7)}
+}
+
+/* 星期表头（周一开头）：列宽序列由 --cal-cols 统一供给，与 .grid 完全同一套 → 表头与日期天然对齐 */
+.week-row{display:grid;grid-template-columns:var(--cal-cols,repeat(7,minmax(0,1fr)));margin-top:2px}
+.week-cell{height:24px;display:flex;align-items:center;justify-content:center;font-size:12px;color:var(--text-3)}
+.week-cell.weekend{color:var(--text-2)}
+
+/* 日期网格：固定 6 周 × 7 列 */
+.grid{position:relative;display:grid;grid-template-columns:var(--cal-cols,repeat(7,minmax(0,1fr)));row-gap:2px} /* v0.1.6.33：列宽序列按各列内容自适应，表头共用同一变量 */
+.cell{position:relative;z-index:1;height:auto;min-height:50px;display:flex;flex-direction:column;align-items:center;padding-top:2px;min-width:0;overflow:visible} /* v0.1.6.72：改 visible——角标圆心要压到块右上角、顶部探出 4.5px，hidden 会把角标顶部裁平；.sub 自带 overflow:hidden，副标题仍受控 */ /* v0.1.6.33：高度随副标题行数增高（两行格的第二行向下延伸，并把下面一行整体推下去） */
+.circle{width:32px;height:32px;border-radius:50%;display:flex;align-items:center;justify-content:center;
+  font-size:13.5px;font-weight:600;color:var(--c-workday);background:transparent;font-variant-numeric:tabular-nums} /* v0.1.6.72：日期数字常态加粗 600（用户定稿；今日 700 / 悬浮 700 仍更高一档） */ /* v0.1.6.18：日期数字等宽，翻日/翻月不左右跳动 */
+.sub{height:15px;margin-top:1px;width:max-content;display:flex;align-items:center;justify-content:center;font-size:10.5px;color:var(--text-3);
+  overflow:hidden;white-space:nowrap} /* v0.1.6.21：flex 垂直居中，修正节日名底卡文字靠下；v0.1.6.33：宽改 max-content，元素宽度即内容真实宽度，列宽据此自适应 */
+/* v0.1.6.33：副标题超过 4 字折两行——第一行仍占原来的副标题位（日期圆不变、位置不动），第二行向下延伸；
+   该格因此比单行格高，下面一行随之整体下移，两行之间的间距自然加大 */
+
+/* —— 五类整圆配色（dayType 驱动；今日紫圆最后声明，优先级覆盖底色） —— */
+.cell.weekend .circle{background:var(--c-weekend);color:#fff}
+.cell.holiday .circle{background:var(--c-holiday);color:#fff}
+.cell.adjustWork .circle{background:var(--c-adjust);color:#fff}
+/* v0.1.6.52：今日紫框收缩到日期数字本身（用户 2026-11-09：紫框只圈数字，不圈下面的节日/农历/色带）。
+   框从 .cell 移到 .circle，尺寸即数字块，副标题不受影响；形状仍为圆角矩形 10px + 2px 描边 + 流动光带。 */
+.cell.today{background:transparent;border-radius:0}
+.cell.today .circle{position:relative;z-index:1;border-radius:10px;box-shadow:0 0 0 2px var(--c-today) inset;
+  background:rgba(124,111,240,.12);color:#fff;font-weight:700} /* v0.1.6.22：今日日期白色加粗（浅色黑色见 data-theme=light 覆盖） */
+/* v0.1.6.33：今日格的紫色方框也加流动光带——与「返回今日」按钮同款，环正好压在 box-shadow 那条 2px 紫框上 */
+.cell.today .circle::after{content:'';position:absolute;inset:0;border-radius:10px;padding:2px;pointer-events:none;
+  background:conic-gradient(from var(--ct-flow),rgba(124,111,240,0) 0deg,#c9c3ff 55deg,#7c6ff0 95deg,rgba(124,111,240,0) 175deg,rgba(124,111,240,0) 360deg);
+  -webkit-mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);
+  -webkit-mask-composite:xor;mask-composite:exclude;
+  animation:ct-flow-spin 2.6s linear infinite}
+@media (prefers-reduced-motion:reduce){
+  .cell.today .circle::after{animation:none;background:rgba(201,195,255,.7)}
+}
+
+/* v0.1.6.61：日期格悬浮态（方案 1A）——数字块变圆角矩形（同今日 32×32 / 圆角 10px）、
+   淡紫底无边框、数字加粗。淡底色走 ::before 叠层而不是改 background：circleStyle() 用内联
+   shorthand（background:transparent / background:#xxx）给底色，它会重置 background-image，
+   而 ::before 绘制在元素底色之上、文字之下，既有语义底色照样透出来。border-radius 必须 !important，
+   因为内联样式同样写了形状（50% 或 8px），改形状要压过内联。
+   v0.1.6.62（方案 1A 加强）：底色从硬编码 10% 换成 --hv-fill（深 30% / 浅 16%）；v0.1.6.63 按用户定稿撤掉那圈 1px 内描边 --hv-ring，
+   与底部图标按钮共用同一组变量，过渡统一 .15s。今日格已有 12% 紫底 + 紫环 + 流动光带，仍不叠加底色，
+   改为 hover 时把环从 2px 加到 2.5px 并提亮（否则普通格加强后今日格反而不显眼）。 */
+.cell:hover .circle{border-radius:10px !important;font-weight:700}
+.cell .circle::before{content:'';position:absolute;inset:0;border-radius:10px;pointer-events:none;
+  background:var(--hv-fill);opacity:0;transition:opacity .15s}
+.cell:hover .circle::before{opacity:1}
+.cell.today:hover .circle::before{opacity:0}
+.cell.today:hover .circle{box-shadow:0 0 0 2.5px #a99cff inset}
+.cell.today:hover .circle::after{padding:2.5px}
+
+/* v0.1.6.61：有提醒的日期角标（方案 2A）——数字块内、数字正上方居中一个 5px 紫点。
+   每条提醒只在「下一次触发日」标点（含单次与周期），多个提醒也只一个点，条数看悬浮气泡。
+   v0.1.6.62（方案 3A）：从框外右上角（top/right:-2px）移到框内顶部居中（left:50% + translateX），
+   原来那位置正好压在「本格右上 / 上一行右下」的分界上，看不出属于哪个日期。
+   框内顶边到数字顶约 8px，点占 1~6px，留 2px 间隙；今日格下移到 3px 避让 2.5px 紫环。 */
+.cell .circle{position:relative}
+/* v0.1.6.63：撤掉原来那圈 1px 描边（用户判为「边缘一圈黑」）；颜色改由设置页「提醒标记色」下发（--c-rm-dot），
+   日期点与图标角标共用同一个来源。今日格仅下移避紫环 + 提亮，不再自带配色。 */
+.cell .rm-dot{position:absolute;top:1px;left:50%;transform:translateX(-50%);width:5px;height:5px;border-radius:50%;
+  background:var(--c-rm-dot,#8b7ff5);pointer-events:none}
+.cell.today .rm-dot{top:3px;filter:brightness(1.35)}
+
+/* —— 副标题配色 —— */
+.cell.holiday .sub{color:var(--c-holiday-text);font-weight:600}
+.cell.adjustWork .sub{color:var(--c-adjust-text);font-weight:600}
+.cell.today .sub{color:#fff;font-weight:700} /* v0.1.6.22：今日农历白色加粗（深色；浅色黑色见 light 覆盖） */
+
+/* —— 右上角休/班小圆角标 —— */
+/* v0.1.6.69：加 z-index——模板里 badge 写在 .circle 之前，两者都是定位元素且 z-index:auto，
+   按 DOM 顺序 circle 后绘制，把 2027 春节这类实心底色（圆角矩形）右上角的「休」盖住了（用户报障）。 */
+/* v0.1.6.73（用户定稿 P2 + S3）：角标明显压进日期块内，水平与垂直各交叠 10px（13px 圆只剩 3px 露在块外）。
+   v0.1.6.72 曾取 P1（圆心压块右上角、交叠 6.5px），用户实机看完后改判 P2。
+   right:1px 的老写法是相对「格子」定位，而日期块在格子里水平居中，两者只相切（同色时连成一片）。
+   现按 50% 反推块右边缘：块右边缘距格右 = 50% - 16px，角标右边缘只外扩 3px → right:calc(50% - 19px)；
+   顶部只探出块顶 3px → top:-1px（含 .cell 的 2px padding-top）。
+   浮起只靠黑色双层阴影（用户明确不要描边）：贴地一层 + 扩散一层。 */
+.badge{position:absolute;top:-1px;right:calc(50% - 19px);width:13px;height:13px;border-radius:50%;z-index:2;
+  display:flex;align-items:center;justify-content:center;font-size:7.5px;line-height:1;color:#fff;
+  box-shadow:0 2px 4px rgba(0,0,0,.75),0 4px 12px rgba(0,0,0,.55)}
+.badge.off{background:var(--c-holiday)}
+.badge.work{background:var(--c-adjust)}
+
+/* 非本月置灰，副标题不显示 */
+.cell.out .circle{color:var(--text-muted);background:transparent}
+.cell.out .sub{color:var(--text-muted)}
+/* v0.1.6.20：节日名称（除夕/春节/元宵/清明等）加纯色圆角底卡、白字，让名称显眼（用户定稿）
+   v0.1.6.37：底卡形态与颜色由设置决定（实心 / 只描边），border 常驻 1px 透明占位，切换形态不跳版 */
+/* v0.1.6.52：色带下方第二行——与第一行同尺寸，形态/颜色由「额外显示」两套设置供给 */
+.sub.sub2{margin-top:1px;width:100%;max-width:100%;box-sizing:border-box;justify-content:center;overflow:hidden}
+
+/* v0.1.6.52：假期副标题色带——宽度铺满格宽（网格列间无横向 gap，相邻格天然无缝） */
+.sub.bar{position:relative;width:100%;margin:1px 0 0;padding:0 2px;height:15px;box-sizing:border-box;justify-content:center;overflow:hidden}
+.sub.bar.two{height:20px;line-height:9px;font-size:9px;justify-content:center}
+/* v0.1.6.52：色带改为「整段一个框」的覆盖层——一个元素跨多列，内部没有格边界，
+   从根本上消除相邻格之间 1px 的亚像素缝。不参与布局，不影响列宽自适应与文字居中。 */
+.barbands{position:absolute;left:0;top:0;right:0;bottom:0;pointer-events:none;z-index:0}
+.barband{position:absolute;box-sizing:border-box}
+.cell.holiday .sub.bar{font-weight:600}
+.sub.pill{display:inline-flex;align-items:center;padding:1px 5px;border:1px solid transparent;border-radius:6px;background:var(--c-holiday);color:#fff;font-weight:600;white-space:nowrap;line-height:1} /* v0.1.6.21：inline-flex 使底卡与文字同中线上下居中 */
+.cell .sub.pill{color:#fff}
+.cell.today .sub.pill{height:auto;min-height:13px;margin-bottom:2px;padding-bottom:2px} /* v0.1.6.25：今日节日底卡底部留 2px，露出今日紫边框；v0.1.6.33：两行时高度自适应 */
+
+/* v0.1.6.33：副标题超过 4 字折成两行（放最后，保证不被上面的 .sub / .sub.pill / today 规则覆盖）
+   第一行仍占原来的副标题位，第二行向下延伸；两行高 20px（今日多 2px 露出紫框），
+   该格因而比单行格高，下面一行整体下移、行距加大，底卡也完整包住两行字 */
+.sub.two{height:20px;margin-top:1px;flex-direction:column;justify-content:flex-start;align-items:center;
+  line-height:9px;font-size:9px;white-space:normal;overflow:visible}
+.sub.pill.two{height:20px;padding:1px 5px;line-height:9px;justify-content:center}
+.cell.today .sub.two{height:22px;padding-bottom:2px}
+
+/* 底部按钮栏（M0-9 / v0.1.6.1）：左=工具区（自动关机，未来新增小工具放其右侧），右=系统区（设置/关于），左右分布 */
+/* v0.1.6.28：上下分区线（1px），不再给底部区独立卡片 */
+.bottom-zone{flex:1;min-height:0;display:flex;align-items:center;justify-content:space-between;gap:6px;padding:4px 14px 6px;margin:0 12px;border-top:1px solid var(--div);position:relative} /* v0.1.6.64：底部 4→6，与上边距 4 视觉配平（窗口底圆角会吃掉视觉留白） */ /* v0.1.6.31：上下留白由 flex:1 的剩余空间均分，曾用「底部加 2px」抵消图标重心偏下；v0.1.6.55：倒计时条列（46px）比按钮高，上下改为对称 4px，留白交给 flex 余量吸收；v0.1.6.33：加 relative 供快速提醒卡片与气泡定位 */
+.bottom-tools,.bottom-sys{display:flex;align-items:center;gap:6px;min-width:0}
+.bottom-btn{width:38px;height:38px;border:none;background:transparent;color:var(--text-2);border-radius:8px;position:relative; /* v0.1.6.55：34→38，与右侧 46px 倒计时条列同基线放大 */
+  display:flex;align-items:center;justify-content:center;cursor:pointer;transition:background .15s,color .15s,border-color .15s}
+.bottom-btn:hover{background:var(--hv-fill);color:var(--text)}
+/* v0.1.6.62：主体加粗——reicon 图标是 currentColor 填充路径，加 .5px 同色描边＝把笔画加厚，
+   与日期数字 700 的加粗同构；color 本身也从 --text-2 提到 --text，颜色再深一层。 */
+.bottom-btn:hover .b-icon svg{stroke:currentColor;stroke-width:.5px;stroke-linejoin:round}
+.bottom-btn .b-icon{display:inline-flex}
+.bottom-btn .b-icon svg{width:22px;height:22px} /* v0.1.6.55：19→22，随按钮 34→38 同步放大 */
+/* v0.1.6.1 自动关机按钮启动状态：主色 1.5px 描边 + 淡紫底 + 图标主色 + 右上角主色圆点状态灯 */
+/* v0.1.6.86：去掉紫框 + 淡紫底（用户判为「外框」），开启态只靠图标变色 + 右上角状态点 */
+/* v0.1.6.87：连图标变色也去掉（用户：激活态只靠右上角角标表达）——开启态与常态同色，
+   .as-active 仅保留作语义标记（回归断言与模板判定仍引用），不再有任何视觉差。 */
+.bottom-btn.as-active{background:transparent}
+.bottom-btn.as-active:hover{background:var(--hv-fill);box-shadow:none}
+/* v0.1.6.63：撤掉 1.5px 描边（用户判为「一圈黑边」）；9px 含边框改 8px 纯填充，颜色跟随提醒标记色 */
+.bottom-btn .as-dot{position:absolute;top:2px;right:2px;width:8px;height:8px;border-radius:50%;background:var(--c-rm-dot,#7c6ff0);box-sizing:border-box}
+
+/* ===== v0.1.6.55：工具按钮右侧「倒计时条」=====
+   位置口径：条挂在每个工具按钮的右侧，靠 .bottom-tools 的 gap:6px 自动产生间隔——条在就有 6px、条消失即回归，不手写 margin。
+   结构：条（4×34）+ 条正下方单位字母（H/M/S，10px），列高 46px，与 38px 按钮同基线居中。
+   分档语义：>24h 不出条（按钮仍亮紫框+点）；24h→6h H 满格 + 封顶线；6h→1h H 6 段逐段熄；
+             1h→1min M 6 段（每段 10min）；<1min S 连续填充 + 朱红内芯。
+   段缝：一个元素 + 硬边重复渐变（随 stage 整体缩放不错位），H/M 档常驻，剩最后一段时外框与缝都还在。
+   v0.1.6.63：缝色由硬编码 rgba(0,0,0,.55) 改为 --cd-seam —— 跟随图标前景色（深色白缝 / 浅色黑缝），用户反馈纯黑缝不好看。 */
+/* v0.1.6.86：竖条方案废弃（用户判为「提醒条」不满意）——剩多少直接写在图标下方一行字，
+   颜色跟随图标前景（currentColor），最后 1 分钟单独一段读秒并转朱红。
+   v0.1.6.87：用户选「方案①」——格式缩成 5:43（4 字符），同宽度下字号 7.5 → 9px（此前 7.5 是
+   因为 6 字符 5H43M 在 38px 按钮里两处并排会重叠，4 字符后余量够，字号可以放大一档）。
+   >1h 一律 H:MM，分钟补零；≥1min 保留 43M；<1min 43S 转朱红。 */
+.cd-txt{position:absolute;left:0;right:0;bottom:-4px;text-align:center;font-size:9px;line-height:10px;
+  font-weight:600;letter-spacing:0;font-variant-numeric:tabular-nums;color:currentColor;white-space:nowrap;
+  pointer-events:none}   /* v0.1.6.88：图标底边 30、文字块顶边 32 → 留 2px 间隔（此前 -1px 是紧贴） */
+.cd-txt[data-tier="S"]{color:#E0524D}
+/* 气泡：两行——第 1 行事项、第 2 行剩余读数；hover 才显示，不参与布局。左对齐避免在底栏最左侧出界 */
+.cd-tip{position:absolute;left:-4px;bottom:calc(100% + 6px);z-index:44;pointer-events:none;
+  padding:6px 10px;border-radius:8px;max-width:214px;box-sizing:border-box;
+  text-align:left;   /* v0.1.6.89：两块文字是 block，会继承 .bottom-btn 的 text-align:center，显式拉回左对齐 */
+  background:rgba(26,26,34,.97);border:1px solid rgba(124,111,240,.32);box-shadow:0 8px 20px rgba(0,0,0,.45);
+  opacity:0;visibility:hidden;transition:opacity .12s}
+.bottom-btn:hover .cd-tip{opacity:1;visibility:visible}
+.cd-tip-1{display:block;font-size:11.5px;line-height:1.35;color:var(--text);max-width:100%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.cd-tip-2{display:block;font-size:10.5px;line-height:1.35;color:var(--text-3);font-variant-numeric:tabular-nums;white-space:nowrap}
+html[data-theme="light"] .cd-tip{background:rgba(252,252,255,.99)}
+
+/* ===== v0.1.6.87：统一悬浮提示 =====
+   以底栏「提醒 / 自动关机」那两枚气泡为准（.cd-tip / .qr-tip）：深底 rgba(26,26,34,.97)、
+   紫边 rgba(124,111,240,.32)、阴影 0 8px 20px rgba(0,0,0,.45)、圆角 8~9px、内边距 6~7 / 10~11px、
+   第一行 11.5px var(--text)、第二行 10.5px var(--text-3)。
+   本类把设置 / 关于 / 隐藏 / 锁定 / 拖动格子 / 返回今日 这些原来只有系统 title 提示的控件，
+   一并换成同一套气泡；文字一律左对齐（用户要求，不居中）。
+   位置三种：默认向上（底栏用）、.ui-tip-b 向下（顶部控件用）、.ui-tip-c 居中锚 / .ui-tip-r 右锚。
+   设置面板内部的悬浮窗不跟随本规范（用户明确）。 */
+.ui-tip{position:absolute;left:0;bottom:calc(100% + 6px);z-index:46;pointer-events:none;box-sizing:border-box;
+  padding:6px 10px;border-radius:8px;max-width:214px;
+  background:rgba(26,26,34,.97);border:1px solid rgba(124,111,240,.32);box-shadow:0 8px 20px rgba(0,0,0,.45);
+  font-size:11.5px;line-height:1.35;color:var(--text);white-space:nowrap;text-align:left;
+  opacity:0;visibility:hidden;transition:opacity .12s ease}
+.ui-tip-b{top:calc(100% + 6px);bottom:auto}
+.ui-tip-c{left:50%;transform:translateX(-50%)}
+.ui-tip-r{left:auto;right:0}
+.hide-btn:hover .ui-tip,.lock-btn:hover .ui-tip,.drag-zone:hover .ui-tip,
+.cal-today-btn:hover .ui-tip,.bottom-btn:hover .ui-tip{opacity:1;visibility:visible}
+html[data-theme="light"] .ui-tip{background:rgba(252,252,255,.99);border-color:rgba(124,111,240,.28);box-shadow:0 8px 20px rgba(0,0,0,.18)}
+
+/* ===== v0.1.6.33：提醒按钮「长按 600ms 快速提醒」 =====
+   悬停出两行气泡 → 按住 600ms 外圈走一圈进度 → 松手不关（卡片里要输入文字）；
+   短线松手 = 原来的单击行为（打开提醒设置窗）。 */
+.qr-wrap{position:relative;display:inline-flex}
+/* 锚点略右移 4px：气泡比按钮宽得多，纯居中会让左侧贴到窗口内边（v0.1.6.33 实测微调） */
+.qr-tip{position:absolute;left:calc(50% + 4px);bottom:calc(100% + 8px);transform:translateX(-50%);z-index:40;
+  padding:7px 11px;border-radius:9px;white-space:nowrap;pointer-events:none;
+  background:rgba(26,26,34,.97);border:1px solid rgba(124,111,240,.32);box-shadow:0 8px 20px rgba(0,0,0,.45)}
+.qr-tip-1{font-size:11.5px;line-height:1.4;color:var(--text)}
+.qr-tip-2{font-size:10.5px;line-height:1.4;color:var(--text-3)}
+
+/* 按住进度环：与紫框光带同色系，压住按钮自身 2px 边，不额外外扩 */
+@property --qr-p{syntax:'<angle>';initial-value:0deg;inherits:false}
+.bottom-btn.qr-press::after{content:'';position:absolute;inset:0;border-radius:inherit;padding:2px;pointer-events:none;
+  background:conic-gradient(from -90deg,#7c6ff0 0deg,#c9c3ff calc(var(--qr-p) / 2),#7c6ff0 var(--qr-p),rgba(124,111,240,0) var(--qr-p),rgba(124,111,240,0) 360deg);
+  -webkit-mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);
+  -webkit-mask-composite:xor;mask-composite:exclude;
+  animation:qr-hold-fill 600ms linear forwards}
+@keyframes qr-hold-fill{from{--qr-p:0deg}to{--qr-p:360deg}}
+
+/* 快速提醒卡片：锚在底部栏上方、窗口水平居中；宽 336 = 窗口 360 左右各留 12 */
+.qr-card{position:absolute;left:50%;transform:translateX(-50%);bottom:calc(100% + 6px);z-index:45;width:336px;box-sizing:border-box;
+  padding:11px 14px 13px;border-radius:14px;background:rgba(24,24,32,.985);border:1px solid rgba(124,111,240,.30);
+  box-shadow:0 16px 40px rgba(0,0,0,.52);animation:qr-card-in .18s ease-out both;will-change:transform}
+@keyframes qr-card-in{from{opacity:0;transform:translate(-50%,6px)}to{opacity:1;transform:translate(-50%,0)}}
+.qr-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:9px}
+.qr-title{font-size:12.5px;font-weight:600;color:var(--text)}
+.qr-x{width:20px;height:20px;border:none;background:transparent;color:var(--text-3);font-size:14px;line-height:1;
+  border-radius:5px;cursor:pointer;padding:0}
+.qr-x:hover{background:var(--hv-fill-sm);color:var(--text);font-weight:600}
+.qr-nums{display:flex;align-items:flex-start;justify-content:center;gap:8px;margin-bottom:10px}
+.qr-numwrap{display:flex;flex-direction:column;align-items:center;gap:3px}
+.qr-num{width:56px;height:32px;box-sizing:border-box;border-radius:8px;border:1px solid rgba(255,255,255,.10);
+  background:rgba(255,255,255,.05);color:var(--text);font-size:14px;font-weight:600;text-align:center;outline:none;font-family:inherit}
+.qr-num:focus{border-color:#7c6ff0;background:rgba(124,111,240,.14)}
+.qr-unit{font-size:10px;color:var(--text-3)}
+.qr-colon{font-size:14px;color:var(--text-3);padding-top:8px;margin:0 -3px} /* v0.1.6.82：父级 gap 8px，抵消后与面板 .as-colon 同为净 5px */
+.qr-quick{display:grid;grid-template-columns:repeat(5,1fr);gap:6px;margin-bottom:9px}
+.qr-q{height:26px;border-radius:7px;border:1px solid rgba(255,255,255,.10);background:rgba(255,255,255,.04);
+  color:var(--text-2);font-size:11px;cursor:pointer;padding:0;font-family:inherit}
+/* v0.1.6.62：快捷分钟按钮纳入通用悬浮态，但强度低于 --hv-fill-sm——它自身有 1px 边框、且选中态 .on 是 20% 紫底 + 紫框，
+   hover 若也用 20% 就分不出选中与悬停；这里取 14% 只加字重，选中态层级保持。 */
+.qr-q:hover{background:rgba(124,111,240,.14);color:var(--text);font-weight:600}
+.qr-q.on{border-color:#7c6ff0;background:rgba(124,111,240,.20);color:var(--as-active-text)}
+.qr-text{width:100%;height:50px;box-sizing:border-box;resize:none;border-radius:9px;border:1px solid rgba(255,255,255,.10);
+  background:rgba(255,255,255,.04);color:var(--text);font-size:11.5px;line-height:1.5;padding:7px 10px;outline:none;
+  font-family:inherit;margin-bottom:9px}
+.qr-text:focus{border-color:#7c6ff0;background:rgba(124,111,240,.10)}
+.qr-sound{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px}
+.qr-slabel{font-size:11.5px;color:var(--text-2)}
+.qr-sw{width:36px;height:18px;border-radius:9px;border:1px solid rgba(255,255,255,.14);background:rgba(255,255,255,.10);
+  position:relative;cursor:pointer;padding:0;transition:background .16s,border-color .16s}
+.qr-sw i{position:absolute;top:2px;left:2px;width:12px;height:12px;border-radius:50%;background:#fff;transition:left .16s}
+.qr-sw.on{background:#7c6ff0;border-color:#7c6ff0}
+.qr-sw.on i{left:20px}
+.qr-add{width:100%;height:32px;border:none;border-radius:9px;background:#7c6ff0;color:#fff;font-size:12.5px;
+  font-weight:600;cursor:pointer;font-family:inherit;transition:background .15s}
+.qr-add:hover{background:#6b5ee6}
+.qr-add:disabled{opacity:.55;cursor:default}
+.qr-err{margin-top:7px;font-size:10.5px;color:#ff8f8f;text-align:center}
+.qr-toast{position:absolute;left:50%;transform:translateX(-50%);bottom:calc(100% + 10px);z-index:46;
+  padding:6px 11px;border-radius:8px;background:rgba(124,111,240,.94);color:#fff;font-size:11px;white-space:nowrap;
+  animation:qr-card-in .16s ease-out both}
+html[data-theme="light"] .qr-card{background:rgba(252,252,255,.99);border-color:rgba(124,111,240,.36)}
+html[data-theme="light"] .qr-tip{background:rgba(252,252,255,.99)}
+html[data-theme="light"] .qr-q.on{color:#1F2329}
+
+/* v0.1.6.60：日历日期右键菜单（自绘，仅一项「添加提醒」；宽度/高度与 JS 里的 clamp 常量对齐） */
+.day-menu{position:fixed;z-index:80;min-width:108px;padding:4px;box-sizing:border-box;border-radius:10px;
+  border:1px solid rgba(124,111,240,.42);background:rgba(26,28,36,.97);box-shadow:0 10px 26px rgba(0,0,0,.5);
+  animation:dm-in .12s ease-out both}
+@keyframes dm-in{from{opacity:0;transform:translateY(-3px)}to{opacity:1;transform:none}}
+.day-menu-item{display:flex;align-items:center;gap:6px;width:100%;height:30px;padding:0 9px;box-sizing:border-box;
+  border:0;border-radius:7px;background:transparent;color:var(--text);font-size:12.5px;font-family:inherit;
+  cursor:pointer;text-align:left}
+.day-menu-item:hover{background:rgba(124,111,240,.22)}
+.dm-ic{display:inline-flex;width:15px;height:15px;opacity:.85}
+.dm-ic svg{width:15px;height:15px}
+html[data-theme="light"] .day-menu{background:rgba(252,252,255,.99);border-color:rgba(124,111,240,.36)}
+html[data-theme="light"] .day-menu-item{color:var(--text)}
+/* v0.1.6.61（方案 4A）：过去的日期菜单照常出现，条目置灰不可点 + 一行原因说明。
+   置灰态不用 --text-3 之外的颜色，避免看起来像可点的危险操作。 */
+.day-menu-item.disabled{color:var(--text-3);cursor:not-allowed;pointer-events:none}
+.day-menu-item.disabled .dm-ic{opacity:.4}
+.day-menu-hint{padding:1px 9px 6px;font-size:10px;line-height:1.3;color:var(--text-3)}
+/* v0.1.6.63：菜单项右侧的条数徽标（「管理提醒」后面跟当日提醒条数） */
+.day-menu-item .dm-count{margin-left:auto;font-size:10px;font-weight:600;color:#c9c3ff;background:rgba(124,111,240,.22);
+  padding:0 5px;height:14px;line-height:14px;border-radius:7px}
+html[data-theme="light"] .day-menu-item .dm-count{color:#4a4a8a;background:rgba(124,111,240,.16)}
+html[data-theme="light"] .day-menu-item.disabled{color:#9a9aa8}
+html[data-theme="light"] .day-menu-hint{color:#9a9aa8}
+
+/* v0.1.6.61（方案 2A + 第 5 点）：日期悬浮气泡 —— 该日会触发的全部提醒从上到下逐条列出，
+   每条两行（第 1 行 HH:MM + 重复标签，第 2 行提醒内容），最多 8 条，超出末行「还有 N 条」。
+   材质沿用倒计时条气泡（深色实底 + 紫边 + 8px 圆角）；pointer-events:none 保证鼠标不移入气泡也不丢 hover。
+   定位是 fixed，必须挂 stage 外层（stage 的 transform:scale 会改 fixed 的包含块）。 */
+/* v0.1.6.81：日历格单击信息气泡（只看，不挡操作）——日期 + 农历，鼠标一动即消失 */
+.day-info{position:fixed;z-index:80;box-sizing:border-box;padding:6px 10px;border-radius:8px;
+  background:rgba(28,30,38,.97);border:1px solid rgba(124,111,240,.36);
+  box-shadow:0 8px 20px rgba(0,0,0,.45);font-size:11.5px;color:var(--text-2);pointer-events:none;white-space:nowrap}
+.day-info .di-ymd{font-size:12px;font-weight:600;color:var(--text)}
+.day-info .di-lunar{margin-top:2px}
+html[data-theme="light"] .day-info{background:rgba(252,252,255,.99)}
+.day-tip{position:fixed;z-index:79;width:auto;max-width:236px;min-width:86px;box-sizing:border-box;padding:6px 10px;border-radius:8px;
+  background:rgba(26,26,34,.97);border:1px solid rgba(124,111,240,.32);box-shadow:0 8px 20px rgba(0,0,0,.45);
+  pointer-events:none;animation:dm-in .12s ease-out both}
+.day-tip-item + .day-tip-item{margin-top:6px;padding-top:6px;border-top:1px solid rgba(124,111,240,.18)}
+.day-tip-l1{display:flex;align-items:baseline;gap:6px;font-size:11.5px;line-height:1.35;color:#c9c3ff;
+  font-variant-numeric:tabular-nums;font-weight:600}
+.day-tip-tag{font-size:10.5px;line-height:1.35;color:var(--text-3);font-weight:400}
+.day-tip-l2{margin-top:1px;font-size:11.5px;line-height:1.35;color:var(--text);white-space:nowrap;
+  overflow:hidden;text-overflow:ellipsis}
+.day-tip-more{margin-top:5px;font-size:10.5px;line-height:1.3;color:var(--text-3)}
+html[data-theme="light"] .day-tip{background:rgba(252,252,255,.99);border-color:rgba(124,111,240,.36)}
+html[data-theme="light"] .day-tip-l1{color:#5a4fd6}
+html[data-theme="light"] .day-tip-item + .day-tip-item{border-top-color:rgba(124,111,240,.22)}
+
+/* 锁定按钮（③）：常驻右上角，锁定/解锁双形态；锁定时拖动/缩放闪烁 5 次 */
+.lock-btn{position:fixed;top:4px;right:4px;z-index:30;width:26px;height:26px;border:none;background:transparent;
+  color:var(--text-2);border-radius:8px;display:flex;align-items:center;justify-content:center;cursor:pointer;
+  transition:background .15s,color .15s}
+.lock-btn:hover{background:var(--hv-fill-sm);color:var(--text)}
+.lock-btn:hover .l-icon svg{stroke:currentColor;stroke-width:.5px;stroke-linejoin:round}
+.lock-btn .l-icon{display:inline-flex}
+.lock-btn .l-icon svg{width:16px;height:16px}
+.lock-btn.hit .l-icon{animation:lockflash .6s ease 5}
+@keyframes lockflash{0%,100%{color:var(--text-2)}50%{color:#f56c6c}}
+
+/* 隐藏小组件按钮（v0.1.6.57）：锁按钮左侧同尺寸并排，视觉语言与锁按钮完全一致（26×26 / 16px 图标 / 同 hover 底色） */
+.hide-btn{position:fixed;top:4px;right:34px;z-index:30;width:26px;height:26px;border:none;background:transparent;
+  color:var(--text-2);border-radius:8px;display:flex;align-items:center;justify-content:center;cursor:pointer;
+  transition:background .15s,color .15s}
+.hide-btn:hover{background:var(--hv-fill-sm);color:var(--text)}
+.hide-btn:hover .l-icon svg{stroke:currentColor;stroke-width:.5px;stroke-linejoin:round}
+.hide-btn .l-icon{display:inline-flex}
+.hide-btn .l-icon svg{width:16px;height:16px}
+
+/* ---------- 浅色主题（v0.1.6.8）：根元素 data-theme="light" 时覆盖全部 token；主色沿用深色 --primary 保持一致 ---------- */
+html[data-theme="light"]{
+  --primary:#7C6FF0;
+  --text:#000000; --text-2:#1F2329; --text-3:#374151; --text-muted:#6B7280;
+  --panel-rgb:255,255,255;
+  --border:rgba(0,0,0,0.10);
+  --c-workday:#000000;
+  --c-weekend:#2C9E37;
+  --c-holiday:#1677FF;
+  --c-adjust:#D43B34;
+  --c-today:#7C6FF0;
+  --c-holiday-text:#2E6BE6;
+  --c-adjust-text:#D43B34;
+  --el-color-primary:#7C6FF0;
+  --hover-bg:rgba(0,0,0,0.06);
+  /* v0.1.6.63 浅色下通用悬浮态：撤环后把填充补到 20% / 16%（原 16% / 12% 撤掉描边会偏弱） */
+  --hv-fill:rgba(124,111,240,.20);
+  --hv-fill-sm:rgba(124,111,240,.16);
+  --c-rm-dot:#8B7FF5;
+     /* 浅色主题图标黑 → 缝黑 */
+  --as-active-text:#4a4a8a;
+  --grip:rgba(0,0,0,0.55);
+  --shadow:rgba(0,0,0,0.10);
+  /* v0.1.6.26 浅色下毛毛玻璃形态变量（边框线/亮边/折射） */
+  --plain-border:rgba(0,0,0,0.10);
+  --edge-line:rgba(255,255,255,0.60);
+  --rim-lt:rgba(255,255,255,0.90); --rim-rb:rgba(255,255,255,0.10);
+  --div:rgba(0,0,0,0.12); /* v0.1.6.28 上下分区线 */
+  --drag-solid:#E6E9EE; /* v0.1.6.30 拖动降级底色（浅色系） */
+}
+/* v0.1.6.22：浅色主题今日日期+农历黑色加粗（方框仍紫、淡紫底不变；与深色白字对应，用户实测定稿深浅文字颜色区分） */
+html[data-theme="light"] .cell.today .circle,
+html[data-theme="light"] .cell.today .sub{color:#000;font-weight:700}
+/* v0.1.6.27 金属亮银（浅色系）：更亮银灰底 + 更强顶光，文字沿用浅色主题深字（可读性已预览验收） */
+html[data-theme="light"] .panel-bg.metal{
+  background:
+    repeating-linear-gradient(90deg, rgba(255,255,255,0.055) 0 0.5px, rgba(0,0,0,0.020) 0.5px 1px, transparent 1px 2px),
+    linear-gradient(180deg, rgba(255,255,255,0.34) 0%, rgba(255,255,255,0.06) 30%, rgba(255,255,255,0) 58%, rgba(0,0,0,0.07) 84%, rgba(0,0,0,0.14) 100%),
+    linear-gradient(104deg, #eef1f4 0%, #fbfcfd 17%, #d4dae0 43%, #eef1f3 61%, #bfc5cd 84%, #a6adb6 100%);
+  border:1px solid rgba(255,255,255,0.66);
+  box-shadow:inset 0 1px 0 rgba(255,255,255,0.95), inset 0 -1px 0 rgba(0,0,0,0.22), 0 12px 28px var(--shadow);
+}
+html[data-theme="light"] .panel-bg.metal::before{
+  background:linear-gradient(108deg, rgba(255,255,255,0.42) 0%, rgba(255,255,255,0.10) 32%, rgba(255,255,255,0) 56%, rgba(0,0,0,0.045) 100%)}
+html[data-theme="light"] .panel-bg.metal::after{
+  background:linear-gradient(100deg, transparent 0%, rgba(255,255,255,0.22) 36%, rgba(255,255,255,0.50) 52%, rgba(255,255,255,0.20) 68%, transparent 100%)}
+</style>
+</head>
+<body>
+<div id="app" v-cloak>
+
+  <!-- v0.1.6.9：面板背景层（主题色 + 透明度实时；窗口已透明，圆角在此匹配）；v0.1.6.27 金属固定不透明；v0.1.6.28 毛毛玻璃不再叠任何写死色块 -->
+  <!-- v0.1.6.30：毛玻璃让位——alpha 置 0 交给系统 Acrylic 真模糊 + 染色；拖动中临时补实心底色 -->
+  <div class="panel-bg" :class="{ glass: texture==='glass', metal: texture==='metal', dragging: dragging }" :style="{ '--panel-alpha': texture==='metal' ? 1 : (texture==='glass' ? (dragging ? 1 : 0) : widgetOpacity / 100) }"></div>
+
+  <!-- 缩放手柄层：8 向贴客户区四边（留在 stage 外层，位置不随内容缩放偏移）；按下经桥 BeginResize 等比缩放 -->
+  <div class="resize-layer">
+    <div class="rz rz-l" @mousedown="onResizeStart('L', $event)"></div>
+    <div class="rz rz-r" @mousedown="onResizeStart('R', $event)"></div>
+    <div class="rz rz-t" @mousedown="onResizeStart('T', $event)"></div>
+    <div class="rz rz-b" @mousedown="onResizeStart('B', $event)"></div>
+    <div class="rz rz-lt" @mousedown="onResizeStart('LT', $event)"></div>
+    <div class="rz rz-rt" @mousedown="onResizeStart('RT', $event)"></div>
+    <div class="rz rz-lb" @mousedown="onResizeStart('LB', $event)"></div>
+    <div class="rz rz-rb" @mousedown="onResizeStart('RB', $event)"></div>
+  </div>
+
+  <!-- 隐藏小组件按钮（v0.1.6.57）：锁按钮左侧同尺寸并排；点击写 widgetVisible=false → 壳层即时隐藏，托盘菜单「显示小组件」可恢复 -->
+  <button class="hide-btn" type="button" @mousedown.stop="onHideWidget">
+    <span class="l-icon" v-html="toolSvg.minimizeSquare"></span>
+    <span class="ui-tip ui-tip-b ui-tip-r">隐藏小组件（可从托盘菜单重新显示）</span>
+  </button>
+
+  <!-- 锁定按钮（③）：常驻右上角，锁定/解锁双形态；锁定时拖动/缩放闪烁 5 次 -->
+  <button class="lock-btn" type="button" @mousedown.stop="onLockToggle"
+          :class="{ locked: widgetLocked }">
+    <span class="l-icon" :class="{ hit: lockHit }" v-html="widgetLocked ? toolSvg.lock : toolSvg.unlock"></span>
+    <span class="ui-tip ui-tip-b ui-tip-r">{{ widgetLocked ? '已锁定位置与缩放，点击解锁' : '锁定位置与缩放' }}</span>
+  </button>
+
+  <!-- stage：基准 340×542 固定排版，外层 transform:scale(k) 整体等比放大缩小；窗口宽高比恒定。
+       opacity 绑在 stage（月历实际内容根）上，随透明度滑块统一透明月历区域（#app 是 Vue 挂载容器，指令不生效） -->
+  <div class="stage" ref="stageEl" :data-texture="texture">
+
+    <!-- 顶部把手：判定区宽度与线条同宽(52px)、上下扩展为 24px 判定带，白线垂直居中；仅该区域按下拖动窗口 -->
+    <div class="app-top">
+      <div class="drag-zone" @mousedown="onDragStart"><span class="grip"></span><span class="ui-tip ui-tip-b ui-tip-c">拖动格子</span></div>
+    </div>
+
+    <!-- 时间区：HH:mm:ss + 公历日期 星期X（纯展示，不参与窗口拖动） -->
+    <section class="time-zone">
+      <div class="clock">{{ timeText }}</div>
+      <div class="date-line">{{ dateLine }}</div>
+    </section>
+
+    <!-- 日历卡片：标题行 + 星期表头 + 固定 6 周网格；箭头点击 / 滚轮离散翻月；农历日、传统节日、手动节假日与补班由数据层合并，五类整圆配色与休/班角标由 CSS dayType 驱动；录入表单留 M0-8 -->
+    <section class="cal-card" @wheel.prevent="onWheel">
+      <header class="cal-head">
+        <!-- v0.1.6.77：箭头分置左右、年月居中，「今天」改文字按钮并排在「›」左侧；与设置页日历面板统一 -->
+        <button class="nav-btn" type="button" aria-label="上一月" @click="prevMonth">‹</button>
+        <div class="cal-title">{{ viewTitle }}</div>
+        <div class="cal-right">
+          <button v-if="!isCurrentMonth" class="cal-today-btn" type="button" @click="gotoToday" aria-label="返回今日">今天<span class="ui-tip ui-tip-b ui-tip-c">返回今日</span></button>
+          <button class="nav-btn" type="button" aria-label="下一月" @click="nextMonth">›</button>
+        </div>
+      </header>
+      <div class="week-row">
+        <div class="week-cell" v-for="w in weekNames" :key="w" :class="{ weekend: w === '六' || w === '日' }">{{ w }}</div>
+      </div>
+      <div class="grid" ref="gridEl">
+        <div class="cell" v-for="c in cells" :key="c.key"
+             @click="dayInfoShow(c, $event)" @contextmenu.prevent="dayMenuOpen(c, $event)"
+             @pointerenter="dayTipEnter(c, $event)" @pointerleave="dayTipClose"
+             :class="{ out: !c.inMonth, today: c.isToday, two: c.subTwo, [c.dayType]: c.inMonth }">
+          <span v-if="c.badge && c.inMonth" class="badge" :class="c.badge === '班' ? 'work' : 'off'" :style="badgeStyle(c)">{{ c.badge }}</span>
+          <div class="circle" :style="circleStyle(c)"><span v-if="rmDotMap[c.ymd]" class="rm-dot"></span>{{ c.day }}</div>
+          <div class="sub" :class="{ pill: c.subIsName && !c.bar, two: c.subTwo, bar: c.bar }" :style="[c.bar ? barStyle(c) : pillStyle(c), subStyle(c)]"><span v-if="c.subTwo">{{ c.subLine1 }}<br>{{ c.subLine2 }}</span><span v-else>{{ c.subText }}</span></div>
+          <div v-if="c.sub2Text" class="sub sub2" :class="{ pill: c.sub2IsName }" :style="sub2Style(c)"><span>{{ c.sub2Text }}</span></div>
+        </div>
+        <div class="barbands" aria-hidden="true"><div class="barband" v-for="b in barBands" :key="b.id" :style="b.style"></div></div>
+      </div>
+    </section>
+
+        <div class="bottom-zone">
+      <!-- v0.1.6.1：左下角=工具区（自动关机 + 未来新增小工具）；右下角=系统区（设置/关于） -->
+      <!-- v0.1.6.23：提醒入口（bell-alert），位于自动关机左侧；当天有提醒时选中态（紫描边+小圆点） -->
+      <div class="bottom-tools">
+        <!-- v0.1.6.33：提醒按钮 = 单击打开提醒设置；悬停提示两行；长按 600ms 弹快速提醒卡片 -->
+        <div class="qr-wrap" @mouseenter="qrHover = true" @mouseleave="qrHover = false">
+          <button class="bottom-btn" :class="{ 'as-active': reminderActive, 'qr-press': qrPressing }" type="button"
+            @pointerdown="qrDown" @click="qrClick" aria-label="提醒"
+            ><span class="b-icon" v-html="toolSvg.bell"></span><span v-if="reminderActive" class="as-dot"></span><span v-if="reminderCd" class="cd-txt" :data-tier="reminderCd.tier">{{ reminderCd.txt }}</span></button>
+          <div v-if="qrHover && !qrOpen && !qrPressing" class="qr-tip">
+            <div class="qr-tip-1">提醒</div>
+            <div class="qr-tip-2">长按快速提醒</div>
+          </div>
+        </div>
+        <button class="bottom-btn" :class="{ 'as-active': autoShutdownActive }" type="button" @click="openAutoShutdown"><span class="b-icon" v-html="toolSvg.power"></span><span v-if="autoShutdownActive" class="as-dot"></span><span v-if="shutdownCd" class="cd-txt" :data-tier="shutdownCd.tier">{{ shutdownCd.txt }}</span><span v-if="!shutdownCd" class="ui-tip">自动关机</span>
+          <div v-if="shutdownCd" class="cd-tip">
+            <div class="cd-tip-1">{{ shutdownCd.label }}</div>
+            <div class="cd-tip-2">还剩 {{ shutdownCd.time }}</div>
+          </div>
+        </button>
+      </div>
+      <div class="bottom-sys">
+        <button class="bottom-btn" type="button" @click="openSettings"><span class="b-icon" v-html="toolSvg.settings2"></span><span class="ui-tip ui-tip-r">设置</span></button>
+        <button class="bottom-btn" type="button" @click="openAbout"><span class="b-icon" v-html="toolSvg.infoCircle"></span><span class="ui-tip ui-tip-r">关于</span></button>
+      </div>
+
+      <!-- 快速提醒卡片（长按触发；锚在底部栏上方，窗口内浮层） -->
+      <div v-if="qrOpen" class="qr-card" @pointerdown.stop>
+        <div class="qr-head">
+          <span class="qr-title">快速提醒</span>
+          <button class="qr-x" type="button" @click="qrClose" aria-label="关闭">×</button>
+        </div>
+        <div class="qr-nums">
+          <div class="qr-numwrap">
+            <input class="qr-num" v-model="qrH" maxlength="2" inputmode="numeric" @input="qrOnInput('h', $event)" @wheel.prevent="qrWheel('h', $event)" aria-label="时" />
+            <span class="qr-unit">时</span>
+          </div>
+          <span class="qr-colon">:</span>
+          <div class="qr-numwrap">
+            <input class="qr-num" v-model="qrM" maxlength="2" inputmode="numeric" @input="qrOnInput('m', $event)" @wheel.prevent="qrWheel('m', $event)" aria-label="分" />
+            <span class="qr-unit">分</span>
+          </div>
+        </div>
+        <div class="qr-quick">
+          <button v-for="q in qrQuickMin" :key="'m' + q.v" class="qr-q" type="button"
+            :class="{ on: qrPickMin === q.v }" @click="qrPick('m', q.v)">{{ q.t }}</button>
+          <button v-for="q in qrQuickHour" :key="'h' + q.v" class="qr-q" type="button"
+            :class="{ on: qrPickHour === q.v }" @click="qrPick('h', q.v)">{{ q.t }}</button>
+        </div>
+        <textarea class="qr-text" v-model="qrText" maxlength="200" placeholder="提醒内容（可选）"></textarea>
+        <div class="qr-sound">
+          <span class="qr-slabel">提示音</span>
+          <button class="qr-sw" :class="{ on: qrSound }" type="button" @click="qrSound = !qrSound"
+            role="switch" :aria-checked="qrSound ? 'true' : 'false'" aria-label="提示音"><i></i></button>
+        </div>
+        <button class="qr-add" type="button" :disabled="qrBusy" @click="qrAdd">添加提醒</button>
+        <div v-if="qrErr" class="qr-err">{{ qrErr }}</div>
+      </div>
+      <div v-if="qrToast" class="qr-toast">{{ qrToast }}</div>
+    </div>
+  </div>
+
+  <!-- v0.1.6.60：日历日期右键菜单 —— WebView2 默认右键菜单已在 v0.1.6.57 关掉，这里自绘。
+       放在 stage 外层：stage 有 JS 计算的 transform:scale，fixed 子元素会被当成相对包含块而错位。 -->
+  <div v-if="dayInfo.open" class="day-info" :style="{ left: dayInfo.x + 'px', top: dayInfo.y + 'px' }">
+    <div class="di-ymd">{{ dayInfo.ymd }}</div>
+    <div class="di-lunar">{{ dayInfo.lunar || '农历加载中…' }}</div>
+  </div>
+  <div v-if="dayMenu.open" class="day-menu" :style="{ left: dayMenu.x + 'px', top: dayMenu.y + 'px' }" @contextmenu.prevent>
+    <button class="day-menu-item" type="button" :class="{ disabled: dayMenu.past }" @click="dayMenuAdd">
+      <span class="dm-ic" v-html="toolSvg.bell"></span>添加提醒
+    </button>
+    <!-- v0.1.6.63：当日有提醒才出现「管理提醒」——打开提醒窗并只列出该日会触发的提醒，可改可删。
+         过去的日期也允许（管理不是新增），只有「添加提醒」置灰。 -->
+    <button v-if="dayMenu.count > 0" class="day-menu-item" type="button" @click="dayMenuManage">
+      <span class="dm-ic" v-html="toolSvg.settings2"></span>管理提醒<span class="dm-count">{{ dayMenu.count }}</span>
+    </button>
+    <div v-if="dayMenu.past" class="day-menu-hint">过去的日期无法添加提醒</div>
+  </div>
+
+  <!-- v0.1.6.61：日期悬浮气泡（同上，挂 stage 外层）。列出该日全部会触发的提醒，逐条从上到下；最多 8 条 -->
+  <div v-if="dayTip.open" class="day-tip" :style="{ left: dayTip.x + 'px', top: dayTip.y + 'px' }">
+    <div class="day-tip-item" v-for="(it, i) in dayTip.items" :key="i">
+      <div class="day-tip-l1">{{ it.time }}<span class="day-tip-tag" v-if="it.tag">{{ it.tag }}</span></div>
+      <div class="day-tip-l2">{{ it.text }}</div>
+    </div>
+    <div class="day-tip-more" v-if="dayTip.more">还有 {{ dayTip.more }} 条</div>
+  </div>
+</div>
+
+<script>
+const { createApp, ref, computed, watch, onMounted, onBeforeUnmount } = Vue;
+
+const WEEK_CN = ['一', '二', '三', '四', '五', '六', '日'];
+const pad = n => String(n).padStart(2, '0');
+
+/* 底部按钮图标（Reicon Outline，已由用户挑选定稿：工具=grid、设置=settings2、关于=info-circle） */
+const toolSvg = {
+  // v0.1.6.33：返回今日按钮只放图标（reicon Refresh 原文，14px 下线条清晰，用户从候选页定稿）
+  refresh: '<svg viewBox="0 0 24 24" aria-hidden="true"><path fill-rule="evenodd" clip-rule="evenodd" d="M2.93077 11.2003C3.00244 6.23968 7.07619 2.25 12.0789 2.25C15.3873 2.25 18.287 3.99427 19.8934 6.60721C20.1103 6.96007 20.0001 7.42199 19.6473 7.63892C19.2944 7.85585 18.8325 7.74565 18.6156 7.39279C17.2727 5.20845 14.8484 3.75 12.0789 3.75C7.8945 3.75 4.50372 7.0777 4.431 11.1982L4.83138 10.8009C5.12542 10.5092 5.60029 10.511 5.89203 10.8051C6.18377 11.0991 6.18191 11.574 5.88787 11.8657L4.20805 13.5324C3.91565 13.8225 3.44398 13.8225 3.15157 13.5324L1.47176 11.8657C1.17772 11.574 1.17585 11.0991 1.46759 10.8051C1.75933 10.5111 2.2342 10.5092 2.52824 10.8009L2.93077 11.2003ZM19.7864 10.4666C20.0786 10.1778 20.5487 10.1778 20.8409 10.4666L22.5271 12.1333C22.8217 12.4244 22.8245 12.8993 22.5333 13.1939C22.2421 13.4885 21.7673 13.4913 21.4727 13.2001L21.0628 12.7949C20.9934 17.7604 16.9017 21.75 11.8825 21.75C8.56379 21.75 5.65381 20.007 4.0412 17.3939C3.82366 17.0414 3.93307 16.5793 4.28557 16.3618C4.63806 16.1442 5.10016 16.2536 5.31769 16.6061C6.6656 18.7903 9.09999 20.25 11.8825 20.25C16.0887 20.25 19.4922 16.9171 19.5625 12.7969L19.1546 13.2001C18.86 13.4913 18.3852 13.4885 18.094 13.1939C17.8028 12.8993 17.8056 12.4244 18.1002 12.1333L19.7864 10.4666Z" fill="currentColor"/></svg>',
+  grid: "<svg viewBox=\"0 0 24 24\" aria-hidden=\"true\"><path fill-rule=\"evenodd\" clip-rule=\"evenodd\" d=\"M4.37109 1.25H7.62891C8.02426 1.24999 8.36535 1.24998 8.64627 1.27293C8.94278 1.29715 9.2377 1.35064 9.52148 1.49524C9.94485 1.71095 10.2891 2.05516 10.5048 2.47852C10.6494 2.76231 10.7028 3.05722 10.7271 3.35373C10.75 3.63466 10.75 3.97572 10.75 4.37108V7.62893C10.75 8.02428 10.75 8.36535 10.7271 8.64627C10.7028 8.94278 10.6494 9.2377 10.5048 9.52148C10.2891 9.94485 9.94485 10.2891 9.52148 10.5048C9.2377 10.6494 8.94278 10.7028 8.64627 10.7271C8.36535 10.75 8.02428 10.75 7.62893 10.75H4.37108C3.97572 10.75 3.63466 10.75 3.35373 10.7271C3.05722 10.7028 2.76231 10.6494 2.47852 10.5048C2.05516 10.2891 1.71095 9.94485 1.49524 9.52148C1.35064 9.2377 1.29715 8.94278 1.27293 8.64627C1.24998 8.36535 1.24999 8.02429 1.25 7.62894V4.37109C1.24999 3.97574 1.24998 3.63465 1.27293 3.35373C1.29715 3.05722 1.35064 2.76231 1.49524 2.47852C1.71095 2.05516 2.05516 1.71095 2.47852 1.49524C2.76231 1.35064 3.05722 1.29715 3.35373 1.27293C3.63465 1.24998 3.97574 1.24999 4.37109 1.25ZM3.47588 2.76795C3.27213 2.78459 3.19659 2.81285 3.15951 2.83175C3.01839 2.90365 2.90365 3.01839 2.83175 3.15951C2.81285 3.19659 2.78459 3.27213 2.76795 3.47588C2.75059 3.68838 2.75 3.96759 2.75 4.4V7.6C2.75 8.03242 2.75059 8.31162 2.76795 8.52413C2.78459 8.72787 2.81285 8.80341 2.83175 8.84049C2.90365 8.98162 3.01839 9.09635 3.15951 9.16826C3.19659 9.18715 3.27213 9.21541 3.47588 9.23206C3.68838 9.24942 3.96759 9.25 4.4 9.25H7.6C8.03242 9.25 8.31162 9.24942 8.52413 9.23206C8.72787 9.21541 8.80341 9.18715 8.84049 9.16826C8.98162 9.09635 9.09635 8.98162 9.16826 8.84049C9.18715 8.80341 9.21541 8.72787 9.23206 8.52413C9.24942 8.31162 9.25 8.03242 9.25 7.6V4.4C9.25 3.96759 9.24942 3.68838 9.23206 3.47588C9.21541 3.27213 9.18715 3.19659 9.16826 3.15951C9.09635 3.01839 8.98162 2.90365 8.84049 2.83175C8.80341 2.81285 8.72787 2.78459 8.52413 2.76795C8.31162 2.75059 8.03242 2.75 7.6 2.75H4.4C3.96759 2.75 3.68838 2.75059 3.47588 2.76795Z\" fill=\"currentColor\"/> <path fill-rule=\"evenodd\" clip-rule=\"evenodd\" d=\"M19.6289 1.25H16.3711C15.9757 1.24999 15.6347 1.24998 15.3537 1.27293C15.0572 1.29715 14.7623 1.35064 14.4785 1.49524C14.0552 1.71095 13.711 2.05516 13.4952 2.47852C13.3506 2.76231 13.2972 3.05722 13.2729 3.35373C13.25 3.63465 13.25 3.97571 13.25 4.37105V7.62891C13.25 8.02425 13.25 8.36535 13.2729 8.64627C13.2972 8.94278 13.3506 9.2377 13.4952 9.52148C13.711 9.94485 14.0552 10.2891 14.4785 10.5048C14.7623 10.6494 15.0572 10.7028 15.3537 10.7271C15.6347 10.75 15.9757 10.75 16.3711 10.75H19.6289C20.0243 10.75 20.3653 10.75 20.6463 10.7271C20.9428 10.7028 21.2377 10.6494 21.5215 10.5048C21.9448 10.2891 22.2891 9.94485 22.5048 9.52148C22.6494 9.2377 22.7028 8.94278 22.7271 8.64627C22.75 8.36535 22.75 8.02428 22.75 7.62893V4.37108C22.75 3.97572 22.75 3.63466 22.7271 3.35373C22.7028 3.05722 22.6494 2.76231 22.5048 2.47852C22.2891 2.05516 21.9448 1.71095 21.5215 1.49524C21.2377 1.35064 20.9428 1.29715 20.6463 1.27293C20.3654 1.24998 20.0243 1.24999 19.6289 1.25ZM15.1595 2.83175C15.1966 2.81285 15.2721 2.78459 15.4759 2.76795C15.6884 2.75059 15.9676 2.75 16.4 2.75H19.6C20.0324 2.75 20.3116 2.75059 20.5241 2.76795C20.7279 2.78459 20.8034 2.81285 20.8405 2.83175C20.9816 2.90365 21.0964 3.01839 21.1683 3.15951C21.1872 3.19659 21.2154 3.27213 21.2321 3.47588C21.2494 3.68838 21.25 3.96759 21.25 4.4V7.6C21.25 8.03242 21.2494 8.31162 21.2321 8.52413C21.2154 8.72787 21.1872 8.80341 21.1683 8.84049C21.0964 8.98162 20.9816 9.09635 20.8405 9.16826C20.8034 9.18715 20.7279 9.21541 20.5241 9.23206C20.3116 9.24942 20.0324 9.25 19.6 9.25H16.4C15.9676 9.25 15.6884 9.24942 15.4759 9.23206C15.2721 9.21541 15.1966 9.18715 15.1595 9.16826C15.0184 9.09635 14.9037 8.98162 14.8317 8.84049C14.8129 8.80341 14.7846 8.72787 14.7679 8.52413C14.7506 8.31162 14.75 8.03242 14.75 7.6V4.4C14.75 3.96759 14.7506 3.68838 14.7679 3.47588C14.7846 3.27213 14.8129 3.19659 14.8317 3.15951C14.9037 3.01839 15.0184 2.90365 15.1595 2.83175Z\" fill=\"currentColor\"/> <path fill-rule=\"evenodd\" clip-rule=\"evenodd\" d=\"M19.6289 13.25H16.3711C15.9758 13.25 15.6346 13.25 15.3537 13.2729C15.0572 13.2972 14.7623 13.3506 14.4785 13.4952C14.0552 13.711 13.711 14.0552 13.4952 14.4785C13.3506 14.7623 13.2972 15.0572 13.2729 15.3537C13.25 15.6346 13.25 15.9757 13.25 16.371V19.6289C13.25 20.0243 13.25 20.3654 13.2729 20.6463C13.2972 20.9428 13.3506 21.2377 13.4952 21.5215C13.711 21.9448 14.0552 22.2891 14.4785 22.5048C14.7623 22.6494 15.0572 22.7028 15.3537 22.7271C15.6347 22.75 15.9757 22.75 16.3711 22.75H19.6289C20.0243 22.75 20.3653 22.75 20.6463 22.7271C20.9428 22.7028 21.2377 22.6494 21.5215 22.5048C21.9448 22.2891 22.2891 21.9448 22.5048 21.5215C22.6494 21.2377 22.7028 20.9428 22.7271 20.6463C22.75 20.3653 22.75 20.0243 22.75 19.6289V16.3711C22.75 15.9757 22.75 15.6347 22.7271 15.3537C22.7028 15.0572 22.6494 14.7623 22.5048 14.4785C22.2891 14.0552 21.9448 13.711 21.5215 13.4952C21.2377 13.3506 20.9428 13.2972 20.6463 13.2729C20.3654 13.25 20.0243 13.25 19.6289 13.25ZM15.1595 14.8317C15.1966 14.8129 15.2721 14.7846 15.4759 14.7679C15.6884 14.7506 15.9676 14.75 16.4 14.75H19.6C20.0324 14.75 20.3116 14.7506 20.5241 14.7679C20.7279 14.7846 20.8034 14.8129 20.8405 14.8317C20.9816 14.9037 21.0964 15.0184 21.1683 15.1595C21.1872 15.1966 21.2154 15.2721 21.2321 15.4759C21.2494 15.6884 21.25 15.9676 21.25 16.4V19.6C21.25 20.0324 21.2494 20.3116 21.2321 20.5241C21.2154 20.7279 21.1872 20.8034 21.1683 20.8405C21.0964 20.9816 20.9816 21.0964 20.8405 21.1683C20.8034 21.1872 20.7279 21.2154 20.5241 21.2321C20.3116 21.2494 20.0324 21.25 19.6 21.25H16.4C15.9676 21.25 15.6884 21.2494 15.4759 21.2321C15.2721 21.2154 15.1966 21.1872 15.1595 21.1683C15.0184 21.0964 14.9037 20.9816 14.8317 20.8405C14.8129 20.8034 14.7846 20.7279 14.7679 20.5241C14.7506 20.3116 14.75 20.0324 14.75 19.6V16.4C14.75 15.9676 14.7506 15.6884 14.7679 15.4759C14.7846 15.2721 14.8129 15.1966 14.8317 15.1595C14.9037 15.0184 15.0184 14.9037 15.1595 14.8317Z\" fill=\"currentColor\"/> <path fill-rule=\"evenodd\" clip-rule=\"evenodd\" d=\"M7.62891 13.25H4.37109C3.97575 13.25 3.63465 13.25 3.35373 13.2729C3.05722 13.2972 2.76231 13.3506 2.47852 13.4952C2.05516 13.711 1.71095 14.0552 1.49524 14.4785C1.35064 14.7623 1.29715 15.0572 1.27293 15.3537C1.24998 15.6347 1.24999 15.9757 1.25 16.3711V19.6289C1.24999 20.0243 1.24998 20.3654 1.27293 20.6463C1.29715 20.9428 1.35064 21.2377 1.49524 21.5215C1.71095 21.9448 2.05516 22.2891 2.47852 22.5048C2.76231 22.6494 3.05722 22.7028 3.35373 22.7271C3.63466 22.75 3.97572 22.75 4.37108 22.75H7.62893C8.02428 22.75 8.36535 22.75 8.64627 22.7271C8.94278 22.7028 9.2377 22.6494 9.52148 22.5048C9.94485 22.2891 10.2891 21.9448 10.5048 21.5215C10.6494 21.2377 10.7028 20.9428 10.7271 20.6463C10.75 20.3653 10.75 20.0243 10.75 19.6289V16.3711C10.75 15.9757 10.75 15.6347 10.7271 15.3537C10.7028 15.0572 10.6494 14.7623 10.5048 14.4785C10.2891 14.0552 9.94485 13.711 9.52148 13.4952C9.2377 13.3506 8.94278 13.2972 8.64627 13.2729C8.36536 13.25 8.02425 13.25 7.62891 13.25ZM3.15951 14.8317C3.19659 14.8129 3.27213 14.7846 3.47588 14.7679C3.68838 14.7506 3.96759 14.75 4.4 14.75H7.6C8.03242 14.75 8.31162 14.7506 8.52413 14.7679C8.72787 14.7846 8.80341 14.8129 8.84049 14.8317C8.98162 14.9037 9.09635 15.0184 9.16826 15.1595C9.18715 15.1966 9.21541 15.2721 9.23206 15.4759C9.24942 15.6884 9.25 15.9676 9.25 16.4V19.6C9.25 20.0324 9.24942 20.3116 9.23206 20.5241C9.21541 20.7279 9.18715 20.8034 9.16826 20.8405C9.09635 20.9816 8.98162 21.0964 8.84049 21.1683C8.80341 21.1872 8.72787 21.2154 8.52413 21.2321C8.31162 21.2494 8.03242 21.25 7.6 21.25H4.4C3.96759 21.25 3.68838 21.2494 3.47588 21.2321C3.27213 21.2154 3.19659 21.1872 3.15951 21.1683C3.01839 21.0964 2.90365 20.9816 2.83175 20.8405C2.81285 20.8034 2.78459 20.7279 2.76795 20.5241C2.75059 20.3116 2.75 20.0324 2.75 19.6V16.4C2.75 15.9676 2.75059 15.6884 2.76795 15.4759C2.78459 15.2721 2.81285 15.1966 2.83175 15.1595C2.90365 15.0184 3.01839 14.9037 3.15951 14.8317Z\" fill=\"currentColor\"/></svg>",
+  settings2: "<svg viewBox=\"0 0 24 24\" aria-hidden=\"true\"><path fill-rule=\"evenodd\" clip-rule=\"evenodd\" d=\"M12 8.25C9.92894 8.25 8.25 9.92893 8.25 12C8.25 14.0711 9.92894 15.75 12 15.75C14.0711 15.75 15.75 14.0711 15.75 12C15.75 9.92893 14.0711 8.25 12 8.25ZM9.75 12C9.75 10.7574 10.7574 9.75 12 9.75C13.2426 9.75 14.25 10.7574 14.25 12C14.25 13.2426 13.2426 14.25 12 14.25C10.7574 14.25 9.75 13.2426 9.75 12Z\" fill=\"currentColor\"/><path fill-rule=\"evenodd\" clip-rule=\"evenodd\" d=\"M11.9747 1.25C11.5303 1.24999 11.1592 1.24999 10.8546 1.27077C10.5375 1.29241 10.238 1.33905 9.94761 1.45933C9.27379 1.73844 8.73843 2.27379 8.45932 2.94762C8.31402 3.29842 8.27467 3.66812 8.25964 4.06996C8.24756 4.39299 8.08454 4.66251 7.84395 4.80141C7.60337 4.94031 7.28845 4.94673 7.00266 4.79568C6.64714 4.60777 6.30729 4.45699 5.93083 4.40743C5.20773 4.31223 4.47642 4.50819 3.89779 4.95219C3.64843 5.14353 3.45827 5.3796 3.28099 5.6434C3.11068 5.89681 2.92517 6.21815 2.70294 6.60307L2.67769 6.64681C2.45545 7.03172 2.26993 7.35304 2.13562 7.62723C1.99581 7.91267 1.88644 8.19539 1.84541 8.50701C1.75021 9.23012 1.94617 9.96142 2.39016 10.5401C2.62128 10.8412 2.92173 11.0602 3.26217 11.2741C3.53595 11.4461 3.68788 11.7221 3.68786 12C3.68785 12.2778 3.53592 12.5538 3.26217 12.7258C2.92169 12.9397 2.62121 13.1587 2.39007 13.4599C1.94607 14.0385 1.75012 14.7698 1.84531 15.4929C1.88634 15.8045 1.99571 16.0873 2.13552 16.3727C2.26983 16.6469 2.45535 16.9682 2.67758 17.3531L2.70284 17.3969C2.92507 17.7818 3.11058 18.1031 3.28089 18.3565C3.45817 18.6203 3.64833 18.8564 3.89769 19.0477C4.47632 19.4917 5.20763 19.6877 5.93073 19.5925C6.30717 19.5429 6.647 19.3922 7.0025 19.2043C7.28833 19.0532 7.60329 19.0596 7.8439 19.1986C8.08452 19.3375 8.24756 19.607 8.25964 19.9301C8.27467 20.3319 8.31403 20.7016 8.45932 21.0524C8.73843 21.7262 9.27379 22.2616 9.94761 22.5407C10.238 22.661 10.5375 22.7076 10.8546 22.7292C11.1592 22.75 11.5303 22.75 11.9747 22.75H12.0252C12.4697 22.75 12.8407 22.75 13.1454 22.7292C13.4625 22.7076 13.762 22.661 14.0524 22.5407C14.7262 22.2616 15.2616 21.7262 15.5407 21.0524C15.686 20.7016 15.7253 20.3319 15.7403 19.93C15.7524 19.607 15.9154 19.3375 16.156 19.1985C16.3966 19.0596 16.7116 19.0532 16.9974 19.2042C17.3529 19.3921 17.6927 19.5429 18.0692 19.5924C18.7923 19.6876 19.5236 19.4917 20.1022 19.0477C20.3516 18.8563 20.5417 18.6203 20.719 18.3565C20.8893 18.1031 21.0748 17.7818 21.297 17.3969L21.3223 17.3531C21.5445 16.9682 21.7301 16.6468 21.8644 16.3726C22.0042 16.0872 22.1135 15.8045 22.1546 15.4929C22.2498 14.7697 22.0538 14.0384 21.6098 13.4598C21.3787 13.1586 21.0782 12.9397 20.7378 12.7258C20.464 12.5538 20.3121 12.2778 20.3121 11.9999C20.3121 11.7221 20.464 11.4462 20.7377 11.2742C21.0783 11.0603 21.3788 10.8414 21.6099 10.5401C22.0539 9.96149 22.2499 9.23019 22.1547 8.50708C22.1136 8.19546 22.0043 7.91274 21.8645 7.6273C21.7302 7.35313 21.5447 7.03183 21.3224 6.64695L21.2972 6.60318C21.0749 6.21825 20.8894 5.89688 20.7191 5.64347C20.5418 5.37967 20.3517 5.1436 20.1023 4.95225C19.5237 4.50826 18.7924 4.3123 18.0692 4.4075C17.6928 4.45706 17.353 4.60782 16.9975 4.79572C16.7117 4.94679 16.3967 4.94036 16.1561 4.80144C15.9155 4.66253 15.7524 4.39297 15.7403 4.06991C15.7253 3.66808 15.686 3.2984 15.5407 2.94762C15.2616 2.27379 14.7262 1.73844 14.0524 1.45933C13.762 1.33905 13.4625 1.29241 13.1454 1.27077C12.8407 1.24999 12.4697 1.24999 12.0252 1.25H11.9747ZM10.5216 2.84515C10.5988 2.81319 10.716 2.78372 10.9567 2.76729C11.2042 2.75041 11.5238 2.75 12 2.75C12.4762 2.75 12.7958 2.75041 13.0432 2.76729C13.284 2.78372 13.4012 2.81319 13.4783 2.84515C13.7846 2.97202 14.028 3.21536 14.1548 3.52165C14.1949 3.61826 14.228 3.76887 14.2414 4.12597C14.271 4.91835 14.68 5.68129 15.4061 6.10048C16.1321 6.51968 16.9974 6.4924 17.6984 6.12188C18.0143 5.9549 18.1614 5.90832 18.265 5.89467C18.5937 5.8514 18.9261 5.94047 19.1891 6.14228C19.2554 6.19312 19.3395 6.27989 19.4741 6.48016C19.6125 6.68603 19.7726 6.9626 20.0107 7.375C20.2488 7.78741 20.4083 8.06438 20.5174 8.28713C20.6235 8.50382 20.6566 8.62007 20.6675 8.70287C20.7108 9.03155 20.6217 9.36397 20.4199 9.62698C20.3562 9.70995 20.2424 9.81399 19.9397 10.0041C19.2684 10.426 18.8122 11.1616 18.8121 11.9999C18.8121 12.8383 19.2683 13.574 19.9397 13.9959C20.2423 14.186 20.3561 14.29 20.4198 14.373C20.6216 14.636 20.7107 14.9684 20.6674 15.2971C20.6565 15.3799 20.6234 15.4961 20.5173 15.7128C20.4082 15.9355 20.2487 16.2125 20.0106 16.6249C19.7725 17.0373 19.6124 17.3139 19.474 17.5198C19.3394 17.72 19.2553 17.8068 19.189 17.8576C18.926 18.0595 18.5936 18.1485 18.2649 18.1053C18.1613 18.0916 18.0142 18.045 17.6983 17.8781C16.9973 17.5075 16.132 17.4803 15.4059 17.8995C14.68 18.3187 14.271 19.0816 14.2414 19.874C14.228 20.2311 14.1949 20.3817 14.1548 20.4784C14.028 20.7846 13.7846 21.028 13.4783 21.1549C13.4012 21.1868 13.284 21.2163 13.0432 21.2327C12.7958 21.2496 12.4762 21.25 12 21.25C11.5238 21.25 11.2042 21.2496 10.9567 21.2327C10.716 21.2163 10.5988 21.1868 10.5216 21.1549C10.2154 21.028 9.97201 20.7846 9.84514 20.4784C9.80512 20.3817 9.77195 20.2311 9.75859 19.874C9.72896 19.0817 9.31997 18.3187 8.5939 17.8995C7.86784 17.4803 7.00262 17.5076 6.30158 17.8781C5.98565 18.0451 5.83863 18.0917 5.73495 18.1053C5.40626 18.1486 5.07385 18.0595 4.81084 17.8577C4.74458 17.8069 4.66045 17.7201 4.52586 17.5198C4.38751 17.314 4.22736 17.0374 3.98926 16.625C3.75115 16.2126 3.59171 15.9356 3.4826 15.7129C3.37646 15.4962 3.34338 15.3799 3.33248 15.2971C3.28921 14.9684 3.37828 14.636 3.5801 14.373C3.64376 14.2901 3.75761 14.186 4.0602 13.9959C4.73158 13.5741 5.18782 12.8384 5.18786 12.0001C5.18791 11.1616 4.73165 10.4259 4.06021 10.004C3.75769 9.81389 3.64385 9.70987 3.58019 9.62691C3.37838 9.3639 3.28931 9.03149 3.33258 8.7028C3.34348 8.62001 3.37656 8.50375 3.4827 8.28707C3.59181 8.06431 3.75125 7.78734 3.98935 7.37493C4.22746 6.96253 4.3876 6.68596 4.52596 6.48009C4.66055 6.27983 4.74468 6.19305 4.81093 6.14222C5.07395 5.9404 5.40636 5.85133 5.73504 5.8946C5.83873 5.90825 5.98576 5.95483 6.30173 6.12184C7.00273 6.49235 7.86791 6.51962 8.59394 6.10045C9.31998 5.68128 9.72896 4.91837 9.75859 4.12602C9.77195 3.76889 9.80512 3.61827 9.84514 3.52165C9.97201 3.21536 10.2154 2.97202 10.5216 2.84515Z\" fill=\"currentColor\"/></svg>",
+  infoCircle: "<svg viewBox=\"0 0 24 24\" aria-hidden=\"true\"><path d=\"M12 17.75C12.4142 17.75 12.75 17.4142 12.75 17V11C12.75 10.5858 12.4142 10.25 12 10.25C11.5858 10.25 11.25 10.5858 11.25 11V17C11.25 17.4142 11.5858 17.75 12 17.75Z\" fill=\"currentColor\"/><path d=\"M12 7C12.5523 7 13 7.44772 13 8C13 8.55228 12.5523 9 12 9C11.4477 9 11 8.55228 11 8C11 7.44772 11.4477 7 12 7Z\" fill=\"currentColor\"/><path fill-rule=\"evenodd\" clip-rule=\"evenodd\" d=\"M1.25 12C1.25 6.06294 6.06294 1.25 12 1.25C17.9371 1.25 22.75 6.06294 22.75 12C22.75 17.9371 17.9371 22.75 12 22.75C6.06294 22.75 1.25 17.9371 1.25 12ZM12 2.75C6.89137 2.75 2.75 6.89137 2.75 12C2.75 17.1086 6.89137 21.25 12 21.25C17.1086 21.25 21.25 17.1086 21.25 12C21.25 6.89137 17.1086 2.75 12 2.75Z\" fill=\"currentColor\"/></svg>",
+  power: "<svg viewBox=\"0 0 24 24\" aria-hidden=\"true\"><path fill-rule=\"evenodd\" clip-rule=\"evenodd\" d=\"M12.75 2.75C12.75 2.33579 12.4142 2 12 2C11.5858 2 11.25 2.33579 11.25 2.75V12C11.25 12.4142 11.5858 12.75 12 12.75C12.4142 12.75 12.75 12.4142 12.75 12V2.75Z\" fill=\"currentColor\"/><path fill-rule=\"evenodd\" clip-rule=\"evenodd\" d=\"M6.34311 5.25736C6.0432 4.97746 5.56842 4.99397 5.28852 5.29388C2.57522 8.12858 1.25 11.9826 1.25 16C1.25 20.1086 4.39137 23.25 8.5 23.25H15.5C19.6086 23.25 22.75 20.1086 22.75 16C22.75 11.9826 21.4248 8.12858 18.7115 5.29388C18.4316 4.99397 17.9568 4.97746 17.6569 5.25736C17.357 5.53727 17.3405 6.01205 17.6204 6.31196C19.9516 8.74308 21.25 12.2321 21.25 16C21.25 19.1775 18.6775 21.75 15.5 21.75H8.5C5.32252 21.75 2.75 19.1775 2.75 16C2.75 12.2321 4.04838 8.74308 6.37956 6.31196C6.65947 6.01205 6.64296 5.53727 6.34311 5.25736Z\" fill=\"currentColor\"/></svg>",
+  /* v0.1.6.23 提醒入口图标（Reicon bell-alert，用户已挑选定稿：铃铛+叹号，Outline） */
+  bell: "<svg viewBox=\"0 0 24 24\" aria-hidden=\"true\"><path d=\"M11 14.5C11 13.9477 11.4477 13.5 12 13.5C12.5523 13.5 13.0001 13.9477 13.0001 14.5C13.0001 15.0523 12.5524 15.5 12.0001 15.5C11.4478 15.5 11 15.0523 11 14.5Z\" fill=\"currentColor\"/><path d=\"M11.25 7V11C11.25 11.4142 11.5858 11.75 12 11.75C12.4142 11.75 12.75 11.4142 12.75 11V7C12.75 6.58579 12.4142 6.25 12 6.25C11.5858 6.25 11.25 6.58579 11.25 7Z\" fill=\"currentColor\"/><path fill-rule=\"evenodd\" clip-rule=\"evenodd\" d=\"M12 1.25C8.21397 1.25 5.05264 4.13698 4.70987 7.90746L4.532 9.86397C4.36027 11.753 3.7192 13.5691 2.66706 15.1473L2.6338 15.1972C2.38354 15.5726 2.25 16.0137 2.25 16.4648C2.25 17.7269 3.27311 18.75 4.53518 18.75H19.4648C20.7269 18.75 21.75 17.7269 21.75 16.4648C21.75 16.0137 21.6165 15.5726 21.3662 15.1972L21.3329 15.1473C20.2808 13.5691 19.6397 11.753 19.468 9.86397L19.2901 7.90746C18.9474 4.13698 15.786 1.25 12 1.25ZM6.20371 8.04326C6.47624 5.0454 8.98978 2.75 12 2.75C15.0102 2.75 17.5238 5.0454 17.7963 8.04326L17.9742 9.99977C18.1685 12.1377 18.8941 14.1932 20.0849 15.9794L20.1181 16.0293C20.2041 16.1583 20.25 16.3098 20.25 16.4648C20.25 16.8985 19.8985 17.25 19.4648 17.25H4.53518C4.10154 17.25 3.75 16.8985 3.75 16.4648C3.75 16.3098 3.79588 16.1583 3.88187 16.0293L3.91513 15.9794C5.10593 14.1932 5.83148 12.1377 6.02584 9.99978L6.20371 8.04326Z\" fill=\"currentColor\"/><path d=\"M10.0506 20.1243C9.84317 19.7658 9.38437 19.6433 9.02583 19.8507C8.66728 20.0581 8.54476 20.5169 8.75217 20.8754C9.39943 21.9943 10.611 22.7499 12 22.7499C13.389 22.7499 14.6006 21.9943 15.2479 20.8754C15.4553 20.5169 15.3328 20.0581 14.9742 19.8507C14.6157 19.6433 14.1569 19.7658 13.9495 20.1243C13.5593 20.7988 12.8319 21.2499 12 21.2499C11.1681 21.2499 10.4407 20.7988 10.0506 20.1243Z\" fill=\"currentColor\"/></svg>",
+  /* ③ 锁定/解锁图标对（用户定稿：解锁=原图；锁定=上部转到右侧扣住锁体的闭合形态） */
+  lock: "<svg viewBox=\"0 0 24 24\" aria-hidden=\"true\" fill=\"none\"><g transform=\"scale(1.33333)\"><path d=\"M12.75,8.25v-3.25c0-1.795-1.455-3.25-3.25-3.25h0c-1.795,0-3.25,1.455-3.25,3.25v3.25\" fill=\"none\" stroke=\"currentColor\" stroke-linecap=\"round\" stroke-linejoin=\"round\" stroke-width=\"1.5\"></path><line x1=\"9.5\" y1=\"11.75\" x2=\"9.5\" y2=\"12.75\" fill=\"none\" stroke=\"currentColor\" stroke-linecap=\"round\" stroke-linejoin=\"round\" stroke-width=\"1.5\"></line><rect x=\"3.75\" y=\"8.25\" width=\"11.5\" height=\"8\" rx=\"2\" ry=\"2\" fill=\"none\" stroke=\"currentColor\" stroke-linecap=\"round\" stroke-linejoin=\"round\" stroke-width=\"1.5\"></rect></g></svg>",
+  unlock: "<svg viewBox=\"0 0 24 24\" aria-hidden=\"true\" fill=\"none\"><g transform=\"scale(1.33333)\"><path d=\"M7.25,8.25v-3.25c0-1.795-1.455-3.25-3.25-3.25h0c-1.795,0-3.25,1.455-3.25,3.25v1.25\" fill=\"none\" stroke=\"currentColor\" stroke-linecap=\"round\" stroke-linejoin=\"round\" stroke-width=\"1.5\"></path><line x1=\"9.5\" y1=\"11.75\" x2=\"9.5\" y2=\"12.75\" fill=\"none\" stroke=\"currentColor\" stroke-linecap=\"round\" stroke-linejoin=\"round\" stroke-width=\"1.5\"></line><rect x=\"3.75\" y=\"8.25\" width=\"11.5\" height=\"8\" rx=\"2\" ry=\"2\" fill=\"none\" stroke=\"currentColor\" stroke-linecap=\"round\" stroke-linejoin=\"round\" stroke-width=\"1.5\"></rect></g></svg>",
+  /* v0.1.6.57：隐藏小组件图标（Reicon minimize-square Outline 原文，用户从 5 个候选中定稿 B：方框 + 收缩箭头，与锁图标同属方框语言） */
+  minimizeSquare: '<svg viewBox="0 0 24 24" aria-hidden="true"><path fill-rule="evenodd" clip-rule="evenodd" d="M11.9426 1.25C9.63423 1.24999 7.82519 1.24998 6.41371 1.43975C4.96897 1.63399 3.82895 2.03933 2.93414 2.93414C2.03933 3.82895 1.63399 4.96897 1.43975 6.41371C1.24998 7.82519 1.24999 9.63423 1.25 11.9426V12.0574C1.24999 14.3658 1.24998 16.1748 1.43975 17.5863C1.63399 19.031 2.03933 20.1711 2.93414 21.0659C3.82895 21.9607 4.96897 22.366 6.41371 22.5603C7.82519 22.75 9.63423 22.75 11.9426 22.75H12.0574C14.3658 22.75 16.1748 22.75 17.5863 22.5603C19.031 22.366 20.1711 21.9607 21.0659 21.0659C21.9607 20.1711 22.366 19.031 22.5603 17.5863C22.75 16.1748 22.75 14.3658 22.75 12.0574V11.9426C22.75 9.63423 22.75 7.82519 22.5603 6.41371C22.366 4.96897 21.9607 3.82895 21.0659 2.93414C20.1711 2.03933 19.031 1.63399 17.5863 1.43975C16.1748 1.24998 14.3658 1.24999 12.0574 1.25H11.9426ZM3.9948 3.9948C4.56445 3.42514 5.33517 3.09825 6.61358 2.92637C7.91356 2.75159 9.62178 2.75 12 2.75C14.3782 2.75 16.0864 2.75159 17.3864 2.92637C18.268 3.0449 18.9082 3.23714 19.4075 3.53188L14.75 8.18934V6.25C14.75 5.83579 14.4142 5.5 14 5.5C13.5858 5.5 13.25 5.83579 13.25 6.25V10C13.25 10.4142 13.5858 10.75 14 10.75H17.75C18.1642 10.75 18.5 10.4142 18.5 10C18.5 9.58579 18.1642 9.25 17.75 9.25H15.8107L20.4681 4.59254C20.7629 5.09183 20.9551 5.73199 21.0736 6.61358C21.2484 7.91356 21.25 9.62178 21.25 12C21.25 14.3782 21.2484 16.0864 21.0736 17.3864C20.9018 18.6648 20.5749 19.4355 20.0052 20.0052C19.4355 20.5749 18.6648 20.9018 17.3864 21.0736C16.0864 21.2484 14.3782 21.25 12 21.25C9.62178 21.25 7.91356 21.2484 6.61358 21.0736C5.73199 20.9551 5.09183 20.7629 4.59254 20.4681L9.25 15.8107V17.75C9.25 18.1642 9.58579 18.5 10 18.5C10.4142 18.5 10.75 18.1642 10.75 17.75V14C10.75 13.5858 10.4142 13.25 10 13.25H6.25C5.83579 13.25 5.5 13.5858 5.5 14C5.5 14.4142 5.83579 14.75 6.25 14.75H8.18934L3.53188 19.4075C3.23714 18.9082 3.0449 18.268 2.92637 17.3864C2.75159 16.0864 2.75 14.3782 2.75 12C2.75 9.62178 2.75159 7.91356 2.92637 6.61358C3.09825 5.33517 3.42514 4.56445 3.9948 3.9948Z" fill="currentColor"/></svg>'
+};
+
+/* 网格 + 农历/传统节日/手动节假日元数据合并由 modules/date-model.js（PiggyDateModel）负责；
+ * 手动存储通道由 modules/manual-store.js 维护；录入表单与批次管理留 M0-8 */
+
+createApp({
+  setup() {
+    const now = ref(new Date());
+    const focused = ref(true);
+    const stageEl = ref(null);
+    let timer = null;
+    let stageRO = null;
+
+    /* ③ 小组件外观：位置锁定状态 + 锁定命中闪烁标记；透明度（0.1~1.0，随滑块统一作用于月历内容层） */
+    const widgetLocked = ref(false);
+    const lockHit = ref(false);
+    const widgetOpacity = ref(100);
+    const autoShutdownActive = ref(false); // v0.1.6.1：自动关机按钮启动状态
+
+    /* ===== v0.1.6.55：工具按钮右侧「倒计时条」=====
+       数据源：提醒 → ListReminders() 的 sortKey（Unix 秒）；自动关机 → GetAutoShutdownStatus() 的 remainingSeconds。
+       at 统一存绝对时间戳，每秒只在前端本地递减，不重复 invoke（壳层零改动）。 */
+    const CD_MAX_SEC = 86400;   // 只体现 24 小时内；超过 1 天不出条
+    const cdClock = ref(Math.floor(Date.now() / 1000));
+    const cdShutdown = ref(null);   // { at, label }
+    const cdReminder = ref(null);
+
+    function cdFmt(sec) {
+      sec = Math.max(0, Math.floor(sec));
+      const h = Math.floor(sec / 3600), m = Math.floor((sec % 3600) / 60), s = sec % 60;
+      return h > 0 ? (h + ':' + pad(m) + ':' + pad(s)) : (m + ':' + pad(s));
+    }
+    /* v0.1.6.86：文字口径三档——>24h 不显示；≥1h → 「5H45M」（分补零，等宽不跳）；
+       ≥1h → 「5:43」；2min~1h → 「43M」；<2min → 秒（「119S」）；<1min 转朱红「59S」。
+       取整一律向下，语义是「还剩几个整单位」，与旧条「剩几个整段」一致。 */
+    function cdView(item) {
+      if (!item || !isFinite(item.at)) return null;
+      const remain = item.at - cdClock.value;
+      if (!(remain > 0) || remain > CD_MAX_SEC) return null;
+      let tier, txt;
+      if (remain >= 3600) {
+        tier = 'H';
+        const h = Math.floor(remain / 3600), m = Math.floor((remain % 3600) / 60);
+        txt = h + ':' + (m < 10 ? '0' + m : m);   /* v0.1.6.87：5H43M → 5:43（4 字符，字号得以放到 9px） */
+      } else if (remain >= 120) {
+        tier = 'M';
+        txt = Math.floor(remain / 60) + 'M';
+      } else {
+        /* v0.1.6.88：2 分钟以内直接用秒（用户：设 1 分钟倒计时应「立刻读秒」，而 M 档会钉在 1M 不动 60 秒）。
+           <60s 仍转朱红（tier=S），60~119s 只换成秒显示、颜色跟图标（tier=S2 无专属配色）。 */
+        tier = remain < 60 ? 'S' : 'S2';
+        txt = remain + 'S';
+      }
+      return { tier: tier, txt: txt, label: item.label, time: cdFmt(remain) };
+    }
+    const shutdownCd = computed(() => cdView(cdShutdown.value));
+    const reminderCd = computed(() => cdView(cdReminder.value));
+
+    /* v0.1.6.61：完整提醒列表。倒计时条只用最近一条，日历的紫点与悬浮气泡要按日期匹配全部条目，
+       所以这里把 ListReminders 的原始数组也存一份（桥零改动）。 */
+    const rmAll = ref([]);
+
+    function loadReminderCd() {
+      if (!window.Bridge || !window.Bridge.invoke) return;
+      window.Bridge.invoke('ListReminders').then(function (raw) {
+        let arr = null;
+        try { arr = typeof raw === 'string' ? JSON.parse(raw) : raw; } catch (_e) { return; }
+        if (!Array.isArray(arr)) return;
+        rmAll.value = arr;                         // v0.1.6.61：日历紫点 / 悬浮气泡的数据源
+        const nowS = Math.floor(Date.now() / 1000);
+        let best = null;
+        for (let i = 0; i < arr.length; i++) {
+          const r = arr[i], at = Number(r && r.sortKey);
+          if (!isFinite(at)) continue;
+          if (at - nowS <= 0) continue;            // 已触发项的哨兵（now + 10 年）在这里被过滤
+          if (!best || at < best.at) best = { at: at, label: (r.text && String(r.text).trim()) || '提醒' };
+        }
+        cdReminder.value = best;                   // >24h 由 cdView 过滤，进入 24h 内会自动出条
+      }).catch(function () {});
+    }
+    function loadShutdownCd() {
+      if (!window.Bridge || !window.Bridge.invoke) return;
+      window.Bridge.invoke('GetAutoShutdownStatus').then(function (raw) {
+        let st = null;
+        try { st = typeof raw === 'string' ? JSON.parse(raw) : raw; } catch (_e) { return; }
+        const rem = Number(st && st.remainingSeconds);
+        if (!st || !st.enabled || !isFinite(rem) || rem <= 0) { cdShutdown.value = null; return; }
+        cdShutdown.value = { at: Math.floor(Date.now() / 1000) + rem, label: '自动关机' };
+      }).catch(function () {});
+    }
+    const reminderActive = ref(false);     // v0.1.6.23：提醒入口选中态（当天有提醒）
+    const texture = ref('plain');          // v0.1.6.26 小组件质感 plain/glass；v0.1.6.27 增加 metal
+    const dragging = ref(false);           // v0.1.6.30 拖动中：系统 Acrylic 被撤掉，面板改补实心底色
+    let lockHitTimer = null;
+
+    /* v0.1.6.8：应用主题到根元素 data-theme（浅色/深色），CSS 按 html[data-theme] 覆盖 token */
+    function applyTheme(t) {
+      const v = t === 'light' ? 'light' : 'dark';
+      document.documentElement.setAttribute('data-theme', v);
+      themeName.value = v;   /* v0.1.6.42：假日样式的内联色需要按主题微调，必须可响应 */
+    }
+    /* v0.1.6.26：应用质感到面板背景（纯色/毛玻璃）；v0.1.6.27 增加金属 */
+    function applyTexture(t) {
+      texture.value = (t === 'glass' || t === 'metal') ? t : 'plain';
+    }
+
+    function onLockToggle() {
+      const next = !widgetLocked.value;
+      widgetLocked.value = next;
+      try { if (window.Bridge && window.Bridge.invoke) window.Bridge.invoke('SetWidgetAppearance', JSON.stringify({ locked: next })).catch(function () {}); } catch (_e) {}
+    }
+
+    /* 锁定状态下拖动/缩放被壳层拦截 → 锁定按钮闪烁 5 次（0.6s×5） */
+    function onLockHit() {
+      // 锁定态拖动/缩放被拦截时的闪烁：JS 定时器直接控制图标颜色，规避 Vue 响应式 class 下 CSS 动画重触发时序问题
+      if (lockHitTimer) { clearTimeout(lockHitTimer); lockHitTimer = null; }
+      var icon = document.querySelector('.lock-btn .l-icon');
+      if (!icon) return;
+      var base = getComputedStyle(icon).color;
+      var count = 0;
+      function tick() {
+        count++;
+        icon.style.color = (count % 2 === 1) ? '#f56c6c' : base;
+        if (count < 10) {
+          lockHitTimer = setTimeout(tick, 300);
+        } else {
+          icon.style.color = base;
+          lockHitTimer = null;
+        }
+      }
+      tick();
+    }
+
+    /* 等比缩放：stage 基准 340×542，按客户区宽/高比例取较小值整体 scale，保证不裁切、不溢出 */
+    const STAGE_BASE_W = 340;
+    const STAGE_BASE_H = 542;
+    let stageK = 1;
+    let gridRO = null;   // v0.1.6.33：记住当前缩放比，测出的内容宽要换算回窗口像素
+    function applyStageScale() {
+      const app = document.getElementById('app');
+      const stage = stageEl.value;
+      if (!app || !stage) return;
+      const k = Math.min(app.clientWidth / STAGE_BASE_W, app.clientHeight / STAGE_BASE_H);
+      /* v0.1.6.33：宽度不再锁死在 340——窗口被壳层按日历内容加宽后，stage 跟着变宽，
+         日历 7 列才真正变宽、表头与日期同列；窄于基准宽时仍按等比缩放，避免内容被挤 */
+      const stageW = Math.max(STAGE_BASE_W, app.clientWidth / k);
+      stage.style.width = stageW + 'px';
+      stage.style.transform = 'scale(' + k + ')';
+      stageK = k;
+      scheduleGridFit();
+      scheduleBarBands();
+    }
+
+    /* ---------- v0.1.6.33：日历列宽自适应 → 请求壳层加宽窗口 ----------
+       根因：.week-row 与 .grid 是两个独立 grid，副标题 nowrap 无兜底时列被 min-content 撑开，
+       表头仍 7 等分 → 错位。这里量出「最宽一列的副标题需要多宽」，换算成需要的窗口像素上报壳层；
+       内容变短（翻到节日少的月份）时上报基准宽，壳层据此缩回。 */
+    let gridFitTimer = 0;
+    let lastFitNeed = 0;
+    let lastColsVal = '';
+    function scheduleGridFit() {
+      if (gridFitTimer) clearTimeout(gridFitTimer);
+      gridFitTimer = setTimeout(fitWidgetWidthToGrid, 60);
+    }
+    function fitWidgetWidthToGrid() {
+      gridFitTimer = 0;
+      try {
+        const gridEl = document.querySelector('.grid');
+        const card = document.querySelector('.cal-card');
+        const stage = stageEl.value;
+        if (!gridEl || !card || !stage || !stageK) return;
+        const gridW = gridEl.getBoundingClientRect().width / stageK;   // 换回设计像素（stage 带 scale）
+        const padTotal = stage.offsetWidth - gridW;                     // 日历卡片左右内边距，恒定
+        const baseGridW = Math.max(1, STAGE_BASE_W - padTotal);
+        const cw0 = baseGridW / 7;                                      // 基准（340 画布下）的等分列宽
+        const subs = gridEl.querySelectorAll('.sub');
+        const needCol = [0, 0, 0, 0, 0, 0, 0];
+        for (let i = 0; i < subs.length; i++) {
+          const el = subs[i];
+          if (!el || !(el.textContent || '').trim()) continue;
+          const col = i % 7;                                            // 网格按行排列，取模得列号
+          /* v0.1.6.52：假期色带 width:100%，宽度等于列宽会形成循环；改读内层 span 的文字固有宽度 */
+          const wEl = el.firstElementChild || el;
+          const w = wEl.getBoundingClientRect().width / stageK;
+          if (w > needCol[col]) needCol[col] = w;
+        }
+        /* 每列各自自适应：取「基准等分宽」与「本列最宽副标题」的较大者；
+           两个 grid 吃同一串列宽，表头与日期列严格对齐。富余空间用 1fr 均分，宽列依旧更宽 */
+        let total = 0;
+        const units = [];
+        for (let i = 0; i < 7; i++) {
+          const w = Math.max(cw0, Math.ceil(needCol[i] + 1));
+          units.push(w);
+          total += w;
+        }
+        const colsVal = units.map(function (w) { return 'minmax(' + w.toFixed(1) + 'px,1fr)'; }).join(' ');
+        if (colsVal !== lastColsVal) {
+          lastColsVal = colsVal;
+          card.style.setProperty('--cal-cols', colsVal);   // 表头与网格都在 .cal-card 内，共用这一串列宽 → 严格对齐
+        }
+        const needStage = Math.max(STAGE_BASE_W, total + padTotal);
+        const needWin = Math.ceil(needStage * stageK) + 6;
+        if (Math.abs(needWin - lastFitNeed) < 6) return;                 // 同一目标不重复请求，吸收取整误差避免来回抖
+        lastFitNeed = needWin;
+        if (window.Bridge && window.Bridge.invoke) {
+          window.Bridge.invoke('FitWidgetWidth', needWin);
+        }
+      } catch (_e) {}
+    }
+
+    const timeText = computed(() => {
+      const d = now.value;
+      return pad(d.getHours()) + ':' + pad(d.getMinutes()) + ':' + pad(d.getSeconds());
+    });
+    const dateLine = computed(() => {
+      const d = now.value;
+      const base = d.getFullYear() + '年' + (d.getMonth() + 1) + '月' + d.getDate() + '日 星期' + WEEK_CN[(d.getDay() + 6) % 7];
+      /* v0.1.6.28：星期后补农历（农历九月廿七 / 农历十月初一），与月历网格同源 PiggyLunar */
+      try {
+        if (window.PiggyLunar && window.PiggyLunar.available()) {
+          const info = window.PiggyLunar.getDayInfo(d.getFullYear(), d.getMonth(), d.getDate());
+          if (info && info.lunarDay) {
+            return base + ' · 农历' + (info.lunarMonth ? info.lunarMonth + '月' : '') + info.lunarDay;
+          }
+        }
+      } catch (_e) { /* 农历不可用时只显公历 */ }
+      return base;
+    });
+
+    /* 查看月份状态（响应式）；初始为当前真实月份。顶部日期行始终显示今天，不受翻月影响 */
+    const viewYear = ref(now.value.getFullYear());
+    const viewMonth = ref(now.value.getMonth());
+    const viewTitle = computed(() => viewYear.value + '年' + (viewMonth.value + 1) + '月');
+    /* v0.1.6.21：是否当前真实月份；翻到非本月时标题中间显示「返回今日」 */
+    const isCurrentMonth = computed(() => viewYear.value === now.value.getFullYear() && viewMonth.value === now.value.getMonth());
+    function gotoToday() { viewYear.value = now.value.getFullYear(); viewMonth.value = now.value.getMonth(); }
+
+    /* 手动节假日存储就绪前不渲染网格；init 完成后触发重算 */
+    const storeReady = ref(false);
+    /* v0.1.6.37：「额外显示」两组内容——节日与纪念日 / 二十四节气。各自独立开关 + 颜色 + 形态。
+       默认值：节日=节日蓝+实心（保持既有观感），节气=青碧+边框（用户定稿） */
+    const SUB_PALETTE = {
+      /* v0.1.6.57：周末绿由 #3FA942（纯中绿，用户反馈「太土」）换成竹青 #4C9A74（色相 151°、饱和 34%；键名仍是 green，config.ini 的 weekendColor=green 无需迁移） */
+      jilan: '#3D6ED8', teal: '#2FB6A3', green: '#4C9A74', gold: '#D8A73B', orange: '#F08A4B',
+      rose: '#E4699B', vermilion: '#E0524D', gray: '#8A909B', neutral: '#24272E',
+      /* v0.1.6.63：新增紫晶，作「提醒标记色」默认值（与旧硬编码 #8b7ff5 同值，视觉零变化） */
+      iris: '#8B7FF5'
+    };
+    const extraFestEnabled = ref(true);
+    const extraFestColor = ref('gold');
+    const extraFestStyle = ref('outline');
+    const extraJieqiEnabled = ref(true);
+    const extraJieqiColor = ref('rose');
+    const extraJieqiStyle = ref('outline');
+
+    /* v0.1.6.42「假日样式」：公共节假日 / 周末 / 调休 三组日期背景（形状·填充·颜色）+ 节日名称 */
+    const themeName = ref('dark');
+    const hsEnabled = ref(true);
+    const hsShape = ref('rect');
+    const hsFill = ref('solid');
+    const hsColor = ref('jilan');
+    const hsNameMode = ref('follow');
+    const hsNameColor = ref('gray');
+    const hsNameFill = ref('outline');
+    const wkEnabled = ref(true);
+    const wkMode = ref('alone');
+    const wkShape = ref('round');
+    const wkFill = ref('solid');
+    const wkColor = ref('green');
+    const adEnabled = ref(true);
+    const adShape = ref('rect');
+    const adFill = ref('outline');
+    const adColor = ref('vermilion');
+
+    function hexOf(key) { return SUB_PALETTE[key] || SUB_PALETTE.jilan; }
+/* v0.1.6.63：提醒标记色下发 —— 只改一个 CSS 变量，日期点与图标角标同时生效（两处共用一个来源） */
+function applyRmDotColor(key) {
+  try {
+    var hex = (key && SUB_PALETTE[key]) ? SUB_PALETTE[key] : '#8B7FF5';
+    document.documentElement.style.setProperty('--c-rm-dot', hex);
+  } catch (_e) {}
+}
+    function rgbOf(h) { h = String(h).replace('#', ''); return [parseInt(h.substr(0, 2), 16), parseInt(h.substr(2, 2), 16), parseInt(h.substr(4, 2), 16)]; }
+    function lumOf(h) {
+      const c = rgbOf(h).map(function (v) { v /= 255; return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4); });
+      return 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2];
+    }
+    function contrastOf(a, b) {
+      const x = lumOf(a), y = lumOf(b), hi = Math.max(x, y), lo = Math.min(x, y);
+      return (hi + 0.05) / (lo + 0.05);
+    }
+    /* 文字色：v0.1.6.72（用户定稿）——所有带实心底色的文字一律白字。
+       起因：朱红「班」角标自动算出黑字，观感脏（用户原话「红底配黑字不好看」）；竹青在 v0.1.6.68 已先行强制白。
+       既然中间亮度色算出来的黑字普遍显脏，就不再按对比度自动挑，整体统一白字。
+       影响面：日期数字、休/班角标、节日名称胶囊三处共用本函数，改一处即三处一致。
+       描边（透明底）形态不走这里，仍由 lineColor() 按主题压深/提亮。 */
+    function textOn(h) { return '#fff'; }
+    function shadeHex(h, f) {
+      const c = rgbOf(h).map(function (v) { return Math.max(0, Math.min(255, Math.round(v * f))); });
+      return '#' + c.map(function (v) { const s = v.toString(16); return s.length < 2 ? '0' + s : s; }).join('');
+    }
+    /* 边框形态下的描边/文字色：非彩色档按主题取反，其余颜色浅色压深、深色提亮，两种主题都能看清 */
+    function lineColor(key) {
+      if (key === 'neutral') return themeName.value === 'light' ? '#23262C' : '#E9EBF0';
+      const h = hexOf(key);
+      return themeName.value === 'light' ? shadeHex(h, 0.72) : shadeHex(h, 1.18);
+    }
+    function solidBg(key) {
+      if (key === 'neutral') return themeName.value === 'light' ? '#24272E' : '#E9EBF0';
+      return hexOf(key);
+    }
+
+    /* v0.1.6.49：节日名称的「颜色键 + 文字色」统一出口，胶囊(pillStyle)与假期其余天农历(subStyle)共用。
+       起因：subStyle 原先读「日期背景」的填充 hsFill 取对比色，而名称读 hsNameFill，
+       当前配置（背景实心 / 名称边框）下就出现「名称蓝字、农历白字」两套算法（用户 2026-11-06 报障）。 */
+    function hsNameKey() {
+      return hsNameMode.value === 'follow' ? hsColor.value : hsNameColor.value;
+    }
+    function hsNameTextColor() {
+      const k = hsNameKey();
+      return hsNameFill.value === 'solid' ? textOn(solidBg(k)) : lineColor(k);
+    }
+
+    /* 日期圆内联样式：形状（圆/固定 8px 圆角矩形）+ 填充（实心/边框）+ 颜色
+       v0.1.6.47：法定节假日整个假期区间统一上日期背景（形状/填充/颜色都跟公共节假日设置），
+       修正 v0.1.6.46 只给正日上形态、其余天只剩字色的做法（用户 2026-11-06 反馈"后面没有日期背景了"）。 */
+    function circleStyle(c) {
+      if (!c || !c.inMonth || c.isToday) return '';   /* 今日格保持紫色描边框，不被假日底色覆盖 */
+      let cfg = null;
+      if (c.dayType === 'holiday') {
+        if (!hsEnabled.value) return 'background:transparent;color:var(--c-workday);box-shadow:none;border-radius:50%';
+        cfg = { en: hsEnabled.value, shape: hsShape.value, fill: hsFill.value, color: hsColor.value };
+      } else if (c.dayType === 'weekend') {
+        cfg = wkMode.value === 'follow'
+          ? { en: wkEnabled.value, shape: hsShape.value, fill: hsFill.value, color: hsColor.value }
+          : { en: wkEnabled.value, shape: wkShape.value, fill: wkFill.value, color: wkColor.value };
+      } else if (c.dayType === 'adjustWork') {
+        cfg = { en: adEnabled.value, shape: adShape.value, fill: adFill.value, color: adColor.value };
+      }
+      if (!cfg || !cfg.en) return 'background:transparent;color:var(--c-workday);box-shadow:none;border-radius:50%';
+      const r = cfg.shape === 'rect' ? '8px' : '50%';
+      if (cfg.fill === 'solid') {
+        const bg = solidBg(cfg.color);
+        return 'border-radius:' + r + ';background:' + bg + ';color:' + textOn(bg);
+      }
+      const lc = lineColor(cfg.color);
+      return 'border-radius:' + r + ';background:transparent;color:' + lc + ';box-shadow:inset 0 0 0 1.5px ' + lc;
+    }
+
+    /* 右上角「休/班」角标：底色跟对应日期的背景色走
+       v0.1.6.47：按 dayType 分流——公共节假日（含假期区间其余天）的「休」跟公共节假日颜色；
+       周末的「休」按周末自己的模式；「班」跟调休上班颜色。
+       修正前一律用周末色，周末若选「单独设置」，公共节假日的「休」会被周末颜色带走（用户 2026-11-06 报障）。 */
+    function badgeStyle(c) {
+      if (!c || !c.inMonth) return '';
+      const key = c.badge === '班'
+        ? adColor.value
+        : (c.dayType === 'holiday'
+          ? hsColor.value
+          : (wkMode.value === 'follow' ? hsColor.value : wkColor.value));
+      const bg = solidBg(key);
+      return 'background:' + bg + ';color:' + textOn(bg);
+    }
+
+    /* 副标题底卡内联样式：实心=底色+自动对比字色，边框=透明底+同色描边与文字
+       v0.1.6.42：节日名称颜色/形态由「假日样式」卡的公共节假日组控制（默认跟随日期背景色），节气仍走自己的两色。 */
+    function pillStyle(c) {
+      if (!c || !c.subIsName) return '';
+      if (c.subKind === 'jieqi') {
+        const k = extraJieqiColor.value;
+        if (extraJieqiStyle.value === 'solid') {
+          const bg = solidBg(k);
+          return 'background:' + bg + ';border-color:' + bg + ';color:' + textOn(bg);
+        }
+        const lc = lineColor(k);
+        return 'background:transparent;border-color:' + lc + ';color:' + lc + ';';
+      }
+      /* v0.1.6.46：节日名称的归属分两套——
+         法定节假日正日（dayType==='holiday'）跟「公共节假日」的节日名称设置；
+         其余展示型节日（重阳节、万圣节等）跟「额外显示 · 节日与纪念日」自己的颜色与样式。
+         修复前一律读 hsName*，导致额外显示的设置怎么改都不生效。 */
+      const isHsName = c.dayType === 'holiday';
+      const k = isHsName ? hsNameKey() : extraFestColor.value;
+      const fill = isHsName ? hsNameFill.value : extraFestStyle.value;
+      if (fill === 'solid') {
+        const bg = solidBg(k);
+        return 'background:' + bg + ';border-color:' + bg + ';color:' + textOn(bg);
+      }
+      const lc = lineColor(k);
+      return 'background:transparent;border-color:' + lc + ';color:' + lc + ';';
+    }
+
+    /* v0.1.6.47：假期区间其余天的农历副标题跟随公共节假日——
+       v0.1.6.49 修正：改取「节日名称」的配色（hsNameKey/hsNameFill），与当天节日名称同色，
+       且**只设文字颜色，不加实心也不加边框**（用户 2026-11-06 定稿）。
+       修正前读的是日期背景的 hsFill，名称边框 + 背景实心时名称蓝字、农历白字。 */
+    function subStyle(c) {
+      if (!c || !c.inMonth || !c.isHolidayRest || !hsEnabled.value) return '';
+      if (c.bar) return 'font-weight:600;';   /* v0.1.6.52：色带内文字色由 barStyle 统一给，不再单独算 */
+      const col = hsNameTextColor();
+      return 'color:' + col + ';font-weight:600;';
+    }
+
+    /* v0.1.6.52：色带下方的第二行（同一天还勾选了节气 / 展示型节日时显示）。
+       样式与颜色都归「额外显示」那两套设置管：该组选实心就实心胶囊，选边框就边框胶囊，颜色同源。 */
+    function sub2Style(c) {
+      if (!c || !c.sub2IsName) return '';
+      const isJieqi = c.sub2Kind === 'jieqi';
+      const k = isJieqi ? extraJieqiColor.value : extraFestColor.value;
+      const fill = isJieqi ? extraJieqiStyle.value : extraFestStyle.value;
+      if (fill === 'solid') {
+        const bg = solidBg(k);
+        return 'background:' + bg + ';border-color:' + bg + ';color:' + textOn(bg) + ';';
+      }
+      const lc = lineColor(k);
+      return 'background:transparent;border-color:' + lc + ';color:' + lc + ';';
+    }
+
+    /* v0.1.6.52：假期副标题行合并成一条连续色带（用户 2026-11-09 定稿，参照 iOS 日历多日事件条）。
+       只连「日期数字下方那一行」，数字层与形状设置完全不动。
+       颜色与形态只认一套：hsNameKey()（跟随底色/自定义）+ hsNameFill（实心/边框），整段共用 → 不再有名称与农历两套取色。
+       跨行处：行末右端方角、下一行左端方角；整个区间第一天左端、最后一天右端才圆角，换行仍连续。 */
+    function barStyle(c) {
+      /* v0.1.6.52：色带内只给字色。底色/边框/圆角全部由整段覆盖层（.barband）承担，
+         这样相邻格之间不会因为各画一段边框而露出 1px 缝。 */
+      if (!c || !c.bar) return '';
+      const k = hsNameKey();
+      return 'color:' + (hsNameFill.value === 'solid' ? textOn(solidBg(k)) : lineColor(k)) + ';';
+    }
+
+    /* v0.1.6.52：整段覆盖层的样式——整段只画一个框，四边都画（内部没有边界）。 */
+    function bandStyle(first, last) {
+      const k = hsNameKey();
+      const R = '6px';
+      const radius = (first.barS ? R : '0') + ' ' + (last.barE ? R : '0') + ' ' + (last.barE ? R : '0') + ' ' + (first.barS ? R : '0');
+      if (hsNameFill.value === 'solid') {
+        return 'background:' + solidBg(k) + ';border-radius:' + radius + ';';
+      }
+      return 'background:transparent;border:1.5px solid ' + lineColor(k) + ';border-radius:' + radius + ';';
+    }
+
+    /* v0.1.6.52：给假期格打「副标题色带」标记。
+       bar=是否属于色带；barS=带子在左侧起头（区间首日或行首）；barE=在右侧收口（区间末日或行尾）。
+       网格按行排列，i%7 即列号，因此「同行相邻且都是假期」就等于日期连续，不需要再比日期。 */
+    function markSubBar(arr) {
+      const isBar = function (c) { return !!(c && c.inMonth && c.dayType === 'holiday' && hsEnabled.value); };
+      for (let i = 0; i < arr.length; i++) {
+        const c = arr[i];
+        c.bar = isBar(c);
+        if (!c.bar) { c.barS = false; c.barE = false; continue; }
+        /* v0.1.6.52：跨行要看「上一行末格 / 下一行首格」，不能按列号截断——
+           截断会把换行处两端都判成区间端点（都画圆角），用户 2026-11-09 报障。 */
+        const prev = i > 0 ? arr[i - 1] : null;
+        const next = (i + 1 < arr.length) ? arr[i + 1] : null;
+        c.barS = !isBar(prev);
+        c.barE = !isBar(next);
+      }
+    }
+
+    /* v0.1.6.52：色带覆盖层。每行连续的假期格合成一个 .barband，
+       位置按格子实际矩形换算回设计像素（stage 带 scale）。
+       一个元素内部没有格边界 → 相邻格之间不再有 1px 亚像素缝；也不改任何格子的布局与居中。 */
+    const gridEl = ref(null);
+    const barBands = ref([]);
+    let bandRaf = 0;
+    function scheduleBarBands() {
+      if (bandRaf) return;
+      bandRaf = requestAnimationFrame(function () {
+        bandRaf = 0;
+        try { layoutBarBands(); } catch (_e) { barBands.value = []; }
+      });
+    }
+    /* 相对 root 的布局像素坐标（不受 stage 的 transform:scale 影响） */
+    function posIn(el, root) {
+      let x = 0, y = 0, cur = el;
+      while (cur && cur !== root) { x += cur.offsetLeft; y += cur.offsetTop; cur = cur.offsetParent; }
+      return { x: x, y: y };
+    }
+    function layoutBarBands() {
+      const grid = gridEl.value;
+      const cs = cells.value;
+      if (!grid || !cs || !cs.length) { if (barBands.value.length) barBands.value = []; return; }
+      const cellEls = grid.querySelectorAll('.cell');
+      if (cellEls.length !== cs.length) return;
+      const out = [];
+      for (let r = 0; r * 7 < cs.length; r++) {
+        for (let i = 0; i < 7; i++) {
+          const base = r * 7 + i;
+          const c = cs[base];
+          if (!c || !c.bar) continue;
+          const firstEl = cellEls[base];
+          const subEl = firstEl ? firstEl.querySelector('.sub.bar') : null;
+          let j = i, lastEl = null;
+          while (j + 1 < 7 && cs[base + (j - i) + 1] && cs[base + (j - i) + 1].bar) {
+            j++;
+            lastEl = cellEls[base + (j - i)];
+          }
+          if (!lastEl) lastEl = firstEl;
+          const lastCell = cs[base + (j - i)];
+          if (firstEl && lastEl && subEl) {
+            /* 用布局像素（offset*）而不是 getBoundingClientRect：stage 带 transform:scale，
+               rect 除以 stageK 会有缩放误差（实测右端少 3–4px），offset 完全不受缩放影响，
+               与 .sub.sub2{width:100%} 的边界严格同源。 */
+            const f = posIn(firstEl, grid);
+            const lpos = posIn(lastEl, grid);
+            const spos = posIn(subEl, firstEl);
+            out.push({
+              id: 'b' + base,
+              style: 'left:' + f.x + 'px;'
+                + 'top:' + (f.y + spos.y) + 'px;'
+                + 'width:' + (lpos.x + lastEl.offsetWidth - f.x) + 'px;'
+                + 'height:' + subEl.offsetHeight + 'px;'
+                + bandStyle(c, lastCell)
+            });
+          }
+          i = j;
+        }
+      }
+      const json = JSON.stringify(out);
+      if (json !== JSON.stringify(barBands.value)) barBands.value = out;
+    }
+
+    /* 农历恒显示（M0-10 起不再提供通用开关，移除切换逻辑） */
+    const cells = computed(() => {
+      if (!storeReady.value) return [];
+      const arr = PiggyDateModel.buildCells(viewYear.value, viewMonth.value, now.value, {
+        lunarEnabled: true,
+        festivalEnabled: extraFestEnabled.value,
+        jieqiEnabled: extraJieqiEnabled.value
+      });
+      arr.forEach(fitSubText);
+      markSubBar(arr);
+      return arr;
+    });
+
+    /* v0.1.6.33：副标题规范化——最多 8 个字；超过 4 个字折成两行（按字数均分，末行不留单字） */
+    function fitSubText(c) {
+      const t = String(c.subText || '').trim();
+      c.subTwo = false;
+      c.subLine1 = t;
+      c.subLine2 = '';
+      if (!t) return;
+      const capped = t.slice(0, 8);
+      if (capped.length > 4) {
+        const half = Math.ceil(capped.length / 2);
+        c.subTwo = true;
+        c.subLine1 = capped.slice(0, half);
+        c.subLine2 = capped.slice(half);
+      }
+    }
+
+    /* v0.1.6.33：网格副标题变化（翻月 / 节假日数据更新）才重算需要的窗口宽；
+       用副标题指纹挡掉每秒 tick 造成的无效重算 */
+    let lastCellsFp = '';
+    watch(cells, function (nv) {
+      const fp = nv.length + '|' + nv.map(function (c) { return c && c.subText ? c.subText : ''; }).join('\u0001');
+      if (fp === lastCellsFp) return;
+      lastCellsFp = fp;
+      scheduleGridFit();
+      scheduleBarBands();
+    });
+
+    /* v0.1.6.52：色带的底色/边框随「假日样式」变化，样式变了要重画覆盖层 */
+    watch([hsNameMode, hsNameColor, hsNameFill, hsColor, themeName], scheduleBarBands);
+
+    function shiftMonth(delta) {
+      let y = viewYear.value, m = viewMonth.value + delta;
+      if (m < 0) { m = 11; y -= 1; } else if (m > 11) { m = 0; y += 1; }
+      viewYear.value = y; viewMonth.value = m;
+    }
+    function prevMonth() { shiftMonth(-1); }
+    function nextMonth() { shiftMonth(1); }
+
+    /* 滚轮离散翻月：一次手势只翻一月，节流 280ms，避免连续滑动跳多页。
+       向上滚（deltaY<0）= 向前回上一月；向下滚（deltaY>0）= 向后进下一月 */
+    let wheelLock = false;
+    function onWheel(e) {
+      dayMenuClose();   // v0.1.6.60：滚轮翻月时收起日期右键菜单
+      if (wheelLock) return;
+      wheelLock = true;
+      setTimeout(() => { wheelLock = false; }, 280);
+      if (e.deltaY < 0) prevMonth(); else if (e.deltaY > 0) nextMonth();
+    }
+
+    function tick() { now.value = new Date(); }
+    function stopTimer() { if (timer) { clearInterval(timer); timer = null; } }
+    /* 时钟刷新策略（复审新增）：默认「实时更新」后台也每秒刷新；「按分钟更新」后台每分钟刷新、聚焦秒级 */
+    let clockRealTime = true;
+    function startTimer() {
+      stopTimer();
+      let lastMin = now.value.getMinutes();
+      timer = setInterval(function () {
+        /* v0.1.6.55：倒计时条每秒推进（秒档需要 1Hz），不受「时钟刷新模式」影响 */
+        cdClock.value = Math.floor(Date.now() / 1000);
+        if (clockRealTime) { tick(); }
+        else if (focused.value) { tick(); }
+        else {
+          const m = new Date().getMinutes();
+          if (m !== lastMin) { lastMin = m; tick(); }
+        }
+      }, 1000);
+    }
+
+    function onDragStart(e) {
+      if (e) e.preventDefault();
+      try { if (window.Bridge && window.Bridge.invoke) window.Bridge.invoke('BeginDrag'); } catch (_e) {}
+    }
+
+    function onResizeStart(dir, e) {
+      if (e) e.preventDefault();
+      try { if (window.Bridge && window.Bridge.invoke) window.Bridge.invoke('BeginResize', dir); } catch (_e) {}
+    }
+
+    onMounted(async () => {
+      tick();
+      startTimer();
+      /* 监听客户区尺寸变化，驱动 stage 等比缩放（壳层锁定宽高比） */
+      const appEl = document.getElementById('app');
+      if (appEl && typeof ResizeObserver !== 'undefined') {
+        stageRO = new ResizeObserver(applyStageScale);
+        stageRO.observe(appEl);
+      }
+      applyStageScale();
+      if (gridEl.value && typeof ResizeObserver !== 'undefined') {
+        gridRO = new ResizeObserver(scheduleBarBands);
+        gridRO.observe(gridEl.value);
+      }
+      if (document.fonts && document.fonts.ready) document.fonts.ready.then(scheduleBarBands);
+      scheduleBarBands();
+      /* 聚焦整秒刷新、失焦暂停；重新聚焦立即刷新一次；定时器只更新时间文本，不重绘网格 */
+      if (window.Bridge && window.Bridge.on) {
+        window.Bridge.on('widget-focus-state', p => {
+          focused.value = !!(p && p.focused);
+          if (focused.value) tick();
+          /* v0.1.6.36：点桌面 / 别的窗口时小组件失焦，快速提醒卡片一并收起；
+             原实现只监听页面内 pointerdown，窗口外的点击根本进不来，卡片会一直挂着。
+             v0.1.6.61（方案 3A）：日期右键菜单与日期悬浮气泡同样在失焦时收起。 */
+          else {
+            if (qrOpen.value) qrClose();
+            dayMenuClose();
+            dayTipClose();
+          }
+        });
+        /* 时钟显示模式变更（设置页切换实时/按分钟）→ 即时生效。
+           Bridge.on 回调已由 bridge.js 解包 payload（fn(m.payload)），p 即 payload 本体 */
+        window.Bridge.on('config-changed', p => {
+          if (p && typeof p.clockRealTime !== 'undefined') {
+            clockRealTime = !!p.clockRealTime;
+            tick();
+          }
+          if (p && typeof p.widgetLocked !== 'undefined') {
+            widgetLocked.value = !!p.widgetLocked;
+          }
+          if (p && typeof p.widgetOpacityPercent !== 'undefined') {
+            widgetOpacity.value = p.widgetOpacityPercent;
+          }
+          if (p && typeof p.widgetTheme !== 'undefined') {
+            applyTheme(p.widgetTheme);
+          }
+          if (p && typeof p.widgetTexture !== 'undefined') {
+            applyTexture(p.widgetTexture);
+          }
+        });
+        /* ③ 锁定状态下拖动/缩放被拦截 → 闪烁 5 次 */
+        window.Bridge.on('widget-locked-hit', p => { onLockHit(); });
+        /* v0.1.6.30 拖动状态：拖动期间撤掉系统模糊、补实心底色，松手恢复 */
+        window.Bridge.on('widget-drag-state', p => { dragging.value = !!(p && p.dragging); });
+        /* v0.1.6.1：自动关机配置变更（启动/取消）→ 刷新按钮启动状态 */
+        window.Bridge.on('auto-shutdown-changed', p => {
+          if (p && typeof p.enabled !== 'undefined') autoShutdownActive.value = !!p.enabled;
+          loadShutdownCd();   // v0.1.6.55：payload 只有 enabled，剩余秒需重新取
+        });
+        /* v0.1.6.23：提醒数据变更 → 刷新提醒入口选中态 */
+        window.Bridge.on('reminder-changed', p => {
+          if (p && typeof p.hasToday !== 'undefined') reminderActive.value = !!p.hasToday;
+          loadReminderCd();   // v0.1.6.55：payload 只有 hasToday，事项与时间需重新取
+        });
+      }
+      /* 时钟显示模式：读取壳层配置（默认实时）；读取失败保持实时 */
+      if (window.Bridge && window.Bridge.invoke) {
+        window.Bridge.invoke('GetClockRealTime').then(function (v) {
+          clockRealTime = (v === true || v === 'true' || v === 1);
+          tick();
+        }).catch(function () {});
+      }
+
+      /* v0.1.6.37：读取「额外显示」配置（节日与纪念日 / 二十四节气 的开关、颜色、形态） */
+      function applyExtraDisplay(d) {
+        if (!d) return;
+        if (typeof d.festivalEnabled !== 'undefined') extraFestEnabled.value = !!d.festivalEnabled;
+        if (typeof d.festivalColor !== 'undefined') extraFestColor.value = d.festivalColor;
+        if (typeof d.festivalStyle !== 'undefined') extraFestStyle.value = d.festivalStyle === 'outline' ? 'outline' : 'solid';
+        if (typeof d.jieqiEnabled !== 'undefined') extraJieqiEnabled.value = !!d.jieqiEnabled;
+        if (typeof d.jieqiColor !== 'undefined') extraJieqiColor.value = d.jieqiColor;
+        if (typeof d.jieqiStyle !== 'undefined') extraJieqiStyle.value = d.jieqiStyle === 'solid' ? 'solid' : 'outline';
+      }
+      if (window.Bridge && window.Bridge.invoke) {
+        window.Bridge.invoke('GetExtraDisplay').then(function (raw) {
+          try { applyExtraDisplay(typeof raw === 'string' ? JSON.parse(raw) : raw); } catch (_e) {}
+        }).catch(function () {});
+      }
+
+      /* v0.1.6.42：读取「假日样式」配置（公共节假日 / 周末 / 调休 / 节气 的名称颜色形态） */
+      function applyHolidayStyle(d) {
+        if (!d) return;
+        if (typeof d.holidayBgEnabled !== 'undefined') hsEnabled.value = !!d.holidayBgEnabled;
+        if (typeof d.holidayShape !== 'undefined') hsShape.value = d.holidayShape === 'rect' ? 'rect' : 'round';
+        if (typeof d.holidayFill !== 'undefined') hsFill.value = d.holidayFill === 'outline' ? 'outline' : 'solid';
+        if (typeof d.holidayColor !== 'undefined') hsColor.value = d.holidayColor;
+        if (typeof d.holidayNameMode !== 'undefined') hsNameMode.value = d.holidayNameMode === 'custom' ? 'custom' : 'follow';
+        if (typeof d.holidayNameColor !== 'undefined') hsNameColor.value = d.holidayNameColor;
+        if (typeof d.holidayNameFill !== 'undefined') hsNameFill.value = d.holidayNameFill === 'outline' ? 'outline' : 'solid';
+        if (typeof d.weekendBgEnabled !== 'undefined') wkEnabled.value = !!d.weekendBgEnabled;
+        if (typeof d.weekendMode !== 'undefined') wkMode.value = d.weekendMode === 'follow' ? 'follow' : 'alone';
+        if (typeof d.weekendShape !== 'undefined') wkShape.value = d.weekendShape === 'rect' ? 'rect' : 'round';
+        if (typeof d.weekendFill !== 'undefined') wkFill.value = d.weekendFill === 'outline' ? 'outline' : 'solid';
+        if (typeof d.weekendColor !== 'undefined') wkColor.value = d.weekendColor;
+        if (typeof d.adjustBgEnabled !== 'undefined') adEnabled.value = !!d.adjustBgEnabled;
+        if (typeof d.adjustShape !== 'undefined') adShape.value = d.adjustShape === 'rect' ? 'rect' : 'round';
+        if (typeof d.adjustFill !== 'undefined') adFill.value = d.adjustFill === 'outline' ? 'outline' : 'solid';
+        if (typeof d.adjustColor !== 'undefined') adColor.value = d.adjustColor;
+    /* v0.1.6.63：提醒标记色 → CSS 变量 --c-rm-dot（日期紫点 + 图标角标共用） */
+    applyRmDotColor(typeof d.reminderDotColor !== 'undefined' ? d.reminderDotColor : '');
+      }
+      function loadHolidayStyle() {
+        if (!(window.Bridge && window.Bridge.invoke)) return;
+        window.Bridge.invoke('GetHolidayStyle').then(function (raw) {
+          try { applyHolidayStyle(typeof raw === 'string' ? JSON.parse(raw) : raw); } catch (_e) {}
+        }).catch(function () {});
+      }
+      loadHolidayStyle();
+      if (window.Bridge && window.Bridge.on) {
+        window.Bridge.on('config-changed', p => {
+          if (p && typeof p.festivalEnabled !== 'undefined') extraFestEnabled.value = !!p.festivalEnabled;
+          if (p && typeof p.festivalColor !== 'undefined') extraFestColor.value = p.festivalColor;
+          if (p && typeof p.festivalStyle !== 'undefined') extraFestStyle.value = p.festivalStyle === 'outline' ? 'outline' : 'solid';
+          if (p && typeof p.jieqiEnabled !== 'undefined') extraJieqiEnabled.value = !!p.jieqiEnabled;
+          if (p && typeof p.jieqiColor !== 'undefined') extraJieqiColor.value = p.jieqiColor;
+          if (p && typeof p.jieqiStyle !== 'undefined') extraJieqiStyle.value = p.jieqiStyle === 'solid' ? 'solid' : 'outline';
+          if (p && p.holidayStyle) loadHolidayStyle();
+        });
+      }
+
+      /* ③ 读取小组件外观配置：锁定状态初始值 */
+      if (window.Bridge && window.Bridge.invoke) {
+        window.Bridge.invoke('GetWidgetAppearance').then(function (raw) {
+          try {
+            const a = typeof raw === 'string' ? JSON.parse(raw) : raw;
+            if (a && typeof a.locked !== 'undefined') widgetLocked.value = !!a.locked;
+            if (a && typeof a.opacityPercent !== 'undefined') widgetOpacity.value = a.opacityPercent;
+            if (a && typeof a.theme !== 'undefined') applyTheme(a.theme);
+            if (a && typeof a.texture !== 'undefined') applyTexture(a.texture);
+          } catch (_e) {}
+        }).catch(function () {});
+      }
+
+      /* v0.1.6.1：读取自动关机状态，初始化按钮启动态 */
+      if (window.Bridge && window.Bridge.invoke) {
+        window.Bridge.invoke('GetAutoShutdownStatus').then(function (raw) {
+          try {
+            const st = typeof raw === 'string' ? JSON.parse(raw) : raw;
+            if (st && typeof st.enabled !== 'undefined') autoShutdownActive.value = !!st.enabled;
+          } catch (_e) {}
+        }).catch(function () {});
+      }
+
+      /* v0.1.6.23：读取提醒今日状态，初始化入口选中态 */
+      if (window.Bridge && window.Bridge.invoke) {
+        window.Bridge.invoke('GetReminderHasToday').then(function (raw) {
+          try {
+            const st = typeof raw === 'string' ? JSON.parse(raw) : raw;
+            if (st && typeof st.hasToday !== 'undefined') reminderActive.value = !!st.hasToday;
+          } catch (_e) {}
+        }).catch(function () {});
+      }
+
+      /* v0.1.6.55：初始化两条倒计时条 */
+      loadReminderCd();
+      loadShutdownCd();
+
+      /* M0-7：拉取/播种手动节假日 JSON，完成后再渲染网格 */
+      try {
+        if (window.PiggyManualStore && typeof window.PiggyManualStore.init === 'function') {
+          await window.PiggyManualStore.init();
+        }
+      } catch (_e) {}
+      storeReady.value = true;
+
+      /* 启动自检：农历模块、今日类型/角标、本月传统节日、手动放假/补班统计；写入壳日志供回归核验 */
+      try {
+        if (window.Bridge && window.Bridge.invoke) {
+          const inMonth = cells.value.filter(c => c.inMonth);
+          const fes = inMonth.filter(c => c.festival).map(c => c.day + '日:' + c.festival);
+          const offs = inMonth.filter(c => c.isOff).map(c => c.day);
+          const adjusts = inMonth.filter(c => c.isAdjustWork).map(c => c.day);
+          const todayCell = inMonth.find(c => c.isToday);
+          window.Bridge.invoke('LogLine', '[CAL] lunar=' + (window.PiggyLunar ? 'ok' : 'missing')
+            + ' today=' + (todayCell ? todayCell.day + ' ' + todayCell.dayType + '/' + todayCell.badge + '/' + todayCell.subText : '-')
+            + ' festivals=[' + fes.join(', ') + ']'
+            + ' off=[' + offs.join(',') + '] adjust=[' + adjusts.join(',') + ']');
+        }
+      } catch (_e) {}
+    });
+    onBeforeUnmount(() => {
+      stopTimer();
+      if (stageRO) { stageRO.disconnect(); stageRO = null; }
+    });
+
+    // M0-9：底部按钮栏 → 打开工具 / 设置 / 关于独立弹窗（壳层单例管理）
+    function openAutoShutdown() { try { window.Bridge && window.Bridge.invoke('OpenAutoShutdown'); } catch (_e) {} }
+    function openReminder() { try { window.Bridge && window.Bridge.invoke('OpenReminder'); } catch (_e) {} }
+
+    /* ===== v0.1.6.33：提醒按钮「长按 600ms」→ 快速提醒卡片 =====
+       阈值取 600ms（iOS 0.5–0.65s / Android 500ms / 华为 UX 标准 400–650ms 的中间值，桌面鼠标留一点余量防手抖）；
+       按住期间按钮外圈走进度环，位移 >10px 或 pointercancel 取消；长按命中后松手不关卡片（要输入文字）。 */
+    const QR_HOLD_MS = 600;
+    /* v0.1.6.35：分/时拆成两行预设，每行各取一个后相加（10分 + 1小时 = 1小时10分）；
+       默认 15 分钟不再单独占一个按钮（上方数值框已默认 0:15）；两行都取消则回到默认 15 分钟 */
+    const QR_QUICK_MIN = [
+      { t: '5分', v: 5 }, { t: '10分', v: 10 }, { t: '20分', v: 20 }, { t: '30分', v: 30 }, { t: '45分', v: 45 }
+    ];
+    const QR_QUICK_HOUR = [
+      { t: '1小时', v: 60 }, { t: '2小时', v: 120 }, { t: '3小时', v: 180 }, { t: '4小时', v: 240 }, { t: '5小时', v: 300 }
+    ];
+    const qrHover = ref(false);
+    const qrOpen = ref(false);
+    const qrPressing = ref(false);
+    const qrH = ref('0');
+    const qrM = ref('15');
+    const qrText = ref('');
+    const qrSound = ref(true);
+    const qrBusy = ref(false);
+    const qrErr = ref('');
+    const qrToast = ref('');
+    const qrPickMin = ref(0);    // 第一行（分钟）当前选中值，0=未选
+    const qrPickHour = ref(0);   // 第二行（小时）当前选中值，0=未选
+    const qrMinutes = computed(function () {
+      var h = parseInt(qrH.value, 10); var m = parseInt(qrM.value, 10);
+      if (!isFinite(h)) h = 0;
+      if (!isFinite(m)) m = 0;
+      return Math.max(0, Math.min(1439, h * 60 + m));
+    });
+    let qrHoldTimer = null, qrStartX = 0, qrStartY = 0, qrSuppress = false, qrToastTimer = null;
+
+    function qrClearHold() { if (qrHoldTimer) { clearTimeout(qrHoldTimer); qrHoldTimer = null; } }
+    function qrBind() {
+      window.addEventListener('pointermove', qrOnMove);
+      window.addEventListener('pointerup', qrOnUp);
+      window.addEventListener('pointercancel', qrOnCancel);
+    }
+    function qrUnbind() {
+      window.removeEventListener('pointermove', qrOnMove);
+      window.removeEventListener('pointerup', qrOnUp);
+      window.removeEventListener('pointercancel', qrOnCancel);
+    }
+    function qrOpenCard() {
+      qrH.value = '0'; qrM.value = '15'; qrText.value = ''; qrSound.value = true;
+      qrPickMin.value = 0; qrPickHour.value = 0;
+      qrErr.value = '';
+      qrOpen.value = true;
+    }
+    function qrDown(e) {
+      if (qrOpen.value) return;
+      if (e && typeof e.button !== 'undefined' && e.button !== 0) return;
+      qrStartX = e ? e.clientX : 0;
+      qrStartY = e ? e.clientY : 0;
+      qrSuppress = false;
+      qrClearHold();
+      qrPressing.value = true;
+      qrBind();
+      qrHoldTimer = setTimeout(function () {
+        qrHoldTimer = null;
+        qrUnbind();
+        qrPressing.value = false;
+        qrSuppress = true;            // 长按后紧跟的那次 click 不再打开提醒设置窗
+        qrOpenCard();
+      }, QR_HOLD_MS);
+    }
+    function qrOnMove(e) {
+      if (!qrPressing.value) return;
+      if (Math.abs(e.clientX - qrStartX) > 10 || Math.abs(e.clientY - qrStartY) > 10) qrOnCancel();
+    }
+    function qrOnUp() { qrClearHold(); qrUnbind(); qrPressing.value = false; }
+    function qrOnCancel() { qrClearHold(); qrUnbind(); qrPressing.value = false; }
+    function qrClick() {
+      if (qrSuppress) { qrSuppress = false; return; }   // 这次 click 是长按的尾巴，吞掉
+      openReminder();
+    }
+    function qrClose() {
+      qrOpen.value = false;
+      qrSuppress = false;
+      qrClearHold(); qrUnbind();
+      qrPressing.value = false;
+    }
+    /* v0.1.6.35：两行预设各自单选、可同时选，合计写回上方时/分；
+       再点一次已选中的按钮 = 取消该行；两行都为空回到默认 15 分钟 */
+    function qrSyncPicks() {
+      const total = (qrPickHour.value || 0) + (qrPickMin.value || 0);
+      if (!total) { qrH.value = '0'; qrM.value = '15'; return; }
+      qrH.value = String(Math.floor(total / 60));
+      qrM.value = pad(total % 60);
+    }
+    function qrPick(which, v) {
+      if (which === 'h') qrPickHour.value = (qrPickHour.value === v ? 0 : v);
+      else qrPickMin.value = (qrPickMin.value === v ? 0 : v);
+      qrSyncPicks();
+    }
+    function qrOnInput(which, e) {
+      const t = e && e.target ? e.target : null;
+      const v = String(t ? t.value : '').replace(/[^\d]/g, '').slice(0, 2);
+      if (which === 'h') qrH.value = v; else qrM.value = v;
+      if (t && t.value !== v) t.value = v;
+      qrPickMin.value = 0; qrPickHour.value = 0;   // 手改数值即视为放弃预设累计
+    }
+    /* v0.1.6.88：快速提醒的时/分输入框支持滚轮加减（上滚 +1、下滚 -1），并同步放弃预设累计 */
+    function qrWheel(which, e) {
+      const step = (e && e.deltaY < 0) ? 1 : -1;
+      if (which === 'h') {
+        const v = Math.max(0, Math.min(23, (parseInt(qrH.value, 10) || 0) + step));
+        qrH.value = String(v);
+      } else {
+        const v = Math.max(0, Math.min(59, (parseInt(qrM.value, 10) || 0) + step));
+        qrM.value = pad(v);
+      }
+      qrPickHour.value = 0;
+      qrPickMin.value = 0;
+    }
+    function qrShowToast(msg) {
+      qrToast.value = msg;
+      if (qrToastTimer) clearTimeout(qrToastTimer);
+      qrToastTimer = setTimeout(function () { qrToast.value = ''; qrToastTimer = null; }, 2200);
+    }
+    function qrFireText(total) {
+      const d = new Date(Date.now() + total * 60000);
+      return pad(d.getHours()) + ':' + pad(d.getMinutes());
+    }
+    function qrAdd() {
+      if (qrBusy.value) return;
+      const h = Math.max(0, Math.min(23, parseInt(qrH.value, 10) || 0));
+      const m = Math.max(0, Math.min(59, parseInt(qrM.value, 10) || 0));
+      const total = h * 60 + m;
+      qrErr.value = '';
+      if (total < 1) { qrErr.value = '至少 1 分钟'; return; }
+      if (!window.Bridge || !window.Bridge.invoke) { qrErr.value = '桥未就绪'; return; }
+      qrBusy.value = true;
+      const payload = {
+        mode: 'countdown', countdownMinutes: total,
+        text: String(qrText.value || '').trim(), sound: !!qrSound.value, repeatType: 'once'
+      };
+      window.Bridge.invoke('AddReminder', JSON.stringify(payload)).then(function (res) {
+        qrBusy.value = false;
+        if (res === 'ok') {
+          qrOpen.value = false;
+          qrShowToast('已添加提醒 · ' + qrFireText(total));
+          /* v0.1.6.88：新增后立刻重取底栏倒计时（原来只在面板事件/启动时刷新，
+             用户实测「设了 1 分钟倒计时，底栏很久才换成新值」就是这里漏了） */
+          setTimeout(loadReminderCd, 300);
+        } else {
+          qrErr.value = String(res || '').replace(/^err:/, '') || '添加失败';
+        }
+      }).catch(function () { qrBusy.value = false; qrErr.value = '添加失败'; });
+    }
+    /* v0.1.6.60：日历日期右键 → 添加提醒
+       右键日期格弹自绘菜单（WebView2 默认右键菜单已在 v0.1.6.57 关闭），选「添加提醒」后打开提醒窗，
+       由壳层导航 panel.html?view=reminder&date=yyyy-MM-dd 预填该日期：默认单次、可改重复、内容选填。 */
+    const DAY_MENU_W = 108, DAY_MENU_H = 34, DAY_MENU_W_PAST = 152;
+    const DAY_MENU_W_MANAGE = 132;   /* v0.1.6.63：带「管理提醒」项（含条数徽标）时更宽 */
+    const dayMenu = ref({ open: false, x: 0, y: 0, ymd: '', past: false, ids: [], count: 0 });
+    function dayMenuOpen(c, e) {
+      if (!c || !c.ymd) return;
+      var vw = document.documentElement.clientWidth || 360;
+      var vh = document.documentElement.clientHeight || 560;
+      var px = (e && typeof e.clientX === 'number') ? e.clientX : 0;
+      var py = (e && typeof e.clientY === 'number') ? e.clientY : 0;
+      /* v0.1.6.61（方案 4A）：过去的日期菜单照常出现，条目置灰 + 一行原因；今天任何时刻都可用。
+         带提示行时菜单更宽，clamp 要用更宽的常量，否则右侧会出界。 */
+      var past = String(c.ymd) < todayYmd();
+      /* v0.1.6.63：当日提醒判定直接复用气泡那套 rmOnDay（含 workday/调休、节假日口径），
+         菜单只负责把 id 带出去——面板不做二次判定，避免两处口径漂移。 */
+      var ids = [];
+      (rmAll.value || []).forEach(function (r) { if (rmOnDay(r, c)) ids.push(String(r.id)); });
+      var count = ids.length;
+      var mw = Math.max(past ? DAY_MENU_W_PAST : DAY_MENU_W, count > 0 ? DAY_MENU_W_MANAGE : 0);
+      /* 高度按项数算：内边距 4+4、每项 30px、过去日期多一行提示约 18px */
+      var mh = 8 + 30 * (1 + (count > 0 ? 1 : 0)) + (past ? 18 : 0);
+      dayTipClose();                                  // 出菜单时收起悬浮气泡，避免两层浮层叠在一起
+      dayMenu.value = {
+        open: true,
+        x: Math.max(4, Math.min(vw - mw - 4, px)),
+        y: Math.max(4, Math.min(vh - mh - 4, py)),
+        ymd: c.ymd,
+        past: past,
+        ids: ids,
+        count: count
+      };
+    }
+    function dayMenuClose() {
+      if (dayMenu.value.open) dayMenu.value = { open: false, x: 0, y: 0, ymd: '', past: false, ids: [], count: 0 };
+    }
+    function dayMenuAdd() {
+      if (!dayMenu.value.open || dayMenu.value.past) return;   // v0.1.6.61：置灰项不响应
+      var ymd = dayMenu.value.ymd;
+      dayMenuClose();
+      try {
+        if (window.Bridge && window.Bridge.invoke) {
+          var p = window.Bridge.invoke('OpenReminderAt', ymd);
+          if (p && p.catch) p.catch(function () {});
+        }
+      } catch (_e) {}
+    }
+    /* v0.1.6.63：右键「管理提醒」→ 打开提醒窗，带上该日会触发的提醒 id（面板据此过滤「已添加提醒」） */
+    function dayMenuManage() {
+      if (!dayMenu.value.open || !dayMenu.value.count) return;
+      var ymd = dayMenu.value.ymd;
+      var ids = (dayMenu.value.ids || []).join(',');
+      dayMenuClose();
+      try {
+        if (window.Bridge && window.Bridge.invoke) {
+          var p = window.Bridge.invoke('OpenReminderManage', ymd, ids);
+          if (p && p.catch) p.catch(function () {});
+        }
+      } catch (_e) {}
+    }
+    function dayMenuDocDown(e) {
+      if (!dayMenu.value.open) return;
+      var m = document.querySelector('.day-menu');
+      if (m && m.contains(e.target)) return;
+      dayMenuClose();
+    }
+    function dayMenuKey(e) {
+      if (dayMenu.value.open && (e.key === 'Escape' || e.key === 'Esc')) dayMenuClose();
+    }
+    /* v0.1.6.61（方案 3A）：窗口失焦关闭 —— 点桌面 / 别的应用不会产生页面 pointerdown，
+       已有的三条路径（窗口内 pointerdown / Esc / 滚轮翻月）兜不住，这里补 window blur 兜底；
+       主通道是壳层推的 widget-focus-state（见 onMounted 回调）。 */
+    function dayMenuBlur() {
+      dayMenuClose();
+      dayTipClose();
+    }
+
+    /* v0.1.6.61：日期悬浮气泡（方案 2A + 用户第 5 点：同一天多条提醒逐条全列，不合并、不省略）
+       数据来自 rmAll（ListReminders 全量，桥零改动），按「该日会触发」匹配：
+         once 按 date 精确；daily 每天；workday 工作日（该日不是周末/法定假日，调休补班算工作日）；
+         weekly 按 weekdays('1,3,5') 与 cell.wday；monthly 按 monthDay 与日号。
+       排序：当天时刻升序；同刻单次在前、周期在后。上限 8 条（气泡 pointer-events:none 无法滚动），
+       超出时末行「还有 N 条」。 */
+    const DAY_TIP_W = 236, DAY_TIP_MAX = 8, DAY_TIP_ITEM_H = 40;
+    const dayTip = ref({ open: false, x: 0, y: 0, items: [], more: 0 });
+    /* ===== v0.1.6.81：农历按需加载（只在存在「每年·农历」提醒或单击日历时才拉起，不进首帧） ===== */
+    var lunarLoading = false, lunarWaiters = [];
+    function lunarEnsure(cb) {
+      if (window.Solar) { if (cb) cb(); return; }
+      if (cb) lunarWaiters.push(cb);
+      if (lunarLoading) return;
+      lunarLoading = true;
+      var s = document.createElement('script');
+      s.src = 'vendor/lunar.min.js';
+      s.onload = function () {
+        lunarLoading = false;
+        var arr = lunarWaiters.slice(); lunarWaiters.length = 0;
+        for (var i = 0; i < arr.length; i++) { try { arr[i](); } catch (e) {} }
+      };
+      document.head.appendChild(s);
+    }
+    function lunarOfCell(ymd) {
+      if (!ymd) return null;
+      if (!window.Solar) { lunarEnsure(); return null; }
+      var p = String(ymd).split('-');
+      var l = window.Solar.fromYmd(Number(p[0]), Number(p[1]), Number(p[2])).getLunar();
+      return { m: Math.abs(l.getMonth()), d: l.getDay() };
+    }
+    function lunarText(ymd) {
+      if (!ymd) return '';
+      if (!window.Solar) { lunarEnsure(); return ''; }
+      var p = String(ymd).split('-');
+      var l = window.Solar.fromYmd(Number(p[0]), Number(p[1]), Number(p[2])).getLunar();
+      var leap = l.getMonth() < 0 ? '闰' : '';
+      return '农历 ' + leap + l.getMonthInChinese() + '月' + l.getDayInChinese();
+    }
+    /* 有「每年·农历」提醒时，入库后就把农历库拉起来，保证气泡/右键能用同一套判定 */
+    function lunarNeedFor(list) {
+      if (!list) return;
+      for (var i = 0; i < list.length; i++) {
+        if (list[i] && list[i].repeatType === 'yearly' && list[i].yearlyMode === 'lunar') { lunarEnsure(); return; }
+      }
+    }
+    const dayInfo = ref({ open: false, x: 0, y: 0, ymd: '', lunar: '' });
+    function dayInfoShow(c, e) {
+      if (!c || !c.ymd) return;
+      dayTipClose();
+      dayMenuClose();
+      var vw = document.documentElement.clientWidth || 360;
+      var vh = document.documentElement.clientHeight || 560;
+      var px = (e && typeof e.clientX === 'number') ? e.clientX : 0;
+      var py = (e && typeof e.clientY === 'number') ? e.clientY : 0;
+      var w = 132, h = 44;
+      var x = Math.max(4, Math.min(vw - w - 4, px + 10));
+      var y = Math.max(4, Math.min(vh - h - 4, py - h - 8));
+      dayInfo.value = { open: true, x: x, y: y, ymd: c.ymd, lunar: lunarText(c.ymd) };
+      if (!window.Solar) {
+        lunarEnsure(function () {
+          if (dayInfo.value.open && dayInfo.value.ymd === c.ymd) {
+            dayInfo.value = Object.assign({}, dayInfo.value, { lunar: lunarText(c.ymd) });
+          }
+        });
+      }
+      /* 鼠标一动就消失：延迟一帧再挂监听，避免本次点击自身的 mousemove 立刻关掉 */
+      setTimeout(function () {
+        document.addEventListener('mousemove', function closeOnce() {
+          document.removeEventListener('mousemove', closeOnce);
+          dayInfo.value = { open: false, x: 0, y: 0, ymd: '', lunar: '' };
+        }, { once: true });
+      }, 0);
+    }
+
+
+
+    function ymdOf(d) { return d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()); }
+    function todayYmd() { return ymdOf(new Date()); }
+
+    /* 紫点（方案 2A）：每条提醒只在「下一次触发日」标一个点 —— 直接用后端给的 sortKey（Unix 秒），
+       周期类不需要前端重算规则；已触发项的哨兵是 now+10 年，用 5 年阈值剔掉。 */
+    const rmDotMap = computed(function () {
+      var map = {}, arr = rmAll.value || [];
+      var nowS = Math.floor(Date.now() / 1000), far = nowS + 5 * 365 * 86400;
+      for (var i = 0; i < arr.length; i++) {
+        var r = arr[i];
+        if (!r) continue;
+        var at = Number(r.sortKey);
+        if (!isFinite(at) || at <= 0 || at > far) continue;
+        var ymd = ymdOf(new Date(at * 1000));
+        map[ymd] = (map[ymd] || 0) + 1;
+      }
+      return map;
+    });
+
+    /* 重复标签（气泡第 1 行、跟在时刻后面；单次返回空串不标） */
+    function rmTag(r) {
+      var type = r.repeatType || 'once';
+      if (type === 'daily') return '每天';
+      /* v0.1.6.90：工作日标签要带上周期与序号（原来只写"工作日"，看不出是每周还是每月、第几个） */
+      if (type === 'workday') {
+        var wpT = (r.workdayPeriod === 'week' || r.workdayPeriod === 'month') ? r.workdayPeriod : 'every';
+        if (wpT === 'every') return '每个工作日';
+        return (wpT === 'week' ? '每周' : '每月') +
+          (r.workdayMode === 'lastNth' ? '倒数第 ' : '第 ') + (Number(r.workdayIndex) || 1) + ' 个工作日';
+      }
+      if (type === 'weekly') {
+        var names = ['一', '二', '三', '四', '五', '六', '日'], picked = [];
+        String(r.weekdays || '').split(',').forEach(function (p) {
+          var n = Number(String(p).trim());
+          if (n >= 1 && n <= 7) picked.push('周' + names[n - 1]);
+        });
+        return picked.length ? ('每' + picked.join('、')) : '每周';
+      }
+      /* v0.1.6.68：每月三种口径各出对应文案，工作日口径不能再写成「每月 X 号」 */
+      if (type === 'monthly') {
+        var mm = r.monthlyMode || 'day';
+        var wi = Number(r.workdayIndex) || 1;
+        if (mm === 'workdayNth') return '每月第 ' + wi + ' 个工作日';
+        if (mm === 'workdayLastNth') return '每月倒数第 ' + wi + ' 个工作日';
+        return '每月 ' + r.monthDay + ' 号';
+      }
+      /* v0.1.6.81：每年也要有重复标签，否则气泡第一行后面空白 */
+      if (type === 'yearly') {
+        if (r.yearlyMode === 'lunar') return '每年农历 ' + (Number(r.lunarMonth) || 1) + ' 月 ' + (Number(r.lunarDay) || 1) + ' 日';
+        var yds = String(r.date || '');
+        if (yds.length >= 10) return '每年 ' + Number(yds.slice(5, 7)) + ' 月 ' + Number(yds.slice(8, 10)) + ' 日';
+        return '每年';
+      }
+      return '';
+    }
+
+    /* 这条提醒在该格当天是否会触发 */
+    function rmOnDay(r, c) {
+      if (!r || !c || !c.ymd) return false;
+      /* v0.1.6.64：倒计时提醒也要落到日历上——触发日取后端 sortKey（createdAt + 分钟数）；
+         已触发项后端给的是 now+10 年哨兵，用 5 年阈值剔掉，口径与紫点一致 */
+      if (r.mode === 'countdown') {
+        var cat = Number(r.sortKey);
+        if (!isFinite(cat) || cat <= 0) return false;
+        if (cat > Math.floor(Date.now() / 1000) + 5 * 365 * 86400) return false;
+        return ymdOf(new Date(cat * 1000)) === c.ymd;
+      }
+      if (r.mode !== 'datetime') return false;
+      var type = r.repeatType || 'once';
+      if (type === 'once') return String(r.date || '') === c.ymd;
+      /* v0.1.6.89：循环提醒的 date 是「起始日」——起始日之前的日期不该命中。
+         此前 daily/workday/weekly/monthly 完全不看 date，于是 11/13 新建的「每周最后一个工作日」
+         在 10/10 也冒出气泡（用户实机报）。yyyy-MM-dd 字典序比较即可，yearly 也天然满足（年在前）。 */
+      var sd = String(r.date || '');
+      if (sd.length === 10 && c.ymd < sd) return false;
+      if (type === 'daily') return true;
+      /* v0.1.6.85：工作日也要认周期与序号——原来只判"这天是不是工作日"，
+         于是「每周倒数第 1 个工作日」在本周每一天都命中（悬浮窗/右键管理全周都有）。
+         周期与序号算法与后端 TodayApplies / WeekWorkdayDate / MonthlyWorkdayDay 同源。 */
+      if (type === 'workday') {
+        var wp = r.workdayPeriod === 'week' || r.workdayPeriod === 'month' ? r.workdayPeriod : 'every';
+        if (wp === 'every') return c.inMonth ? (c.dayType !== 'weekend' && c.dayType !== 'holiday') : !c.isWeekend;
+        var nthW = Number(r.workdayIndex) || 1;
+        var mdW = r.workdayMode === 'lastNth' ? 'lastNth' : 'nth';
+        var cellsW = cells.value || [];
+        var mapW = {};
+        for (var mi = 0; mi < cellsW.length; mi++) { var cm = cellsW[mi]; if (cm && cm.ymd) mapW[cm.ymd] = cm; }
+        if (wp === 'month') {
+          var preM = String(c.ymd).slice(0, 7), wdM = [];
+          for (var mj = 0; mj < cellsW.length; mj++) {
+            var cp = cellsW[mj];
+            if (cp && String(cp.ymd).slice(0, 7) === preM && cp.dayType !== 'weekend' && cp.dayType !== 'holiday') wdM.push(cp);
+          }
+          if (!wdM.length) return false;
+          var atM = mdW === 'lastNth' ? wdM.length - nthW : nthW - 1;
+          if (atM < 0) atM = 0;
+          if (atM >= wdM.length) atM = wdM.length - 1;
+          return wdM[atM].ymd === c.ymd;
+        }
+        /* 每周：该日所在自然周（周一算起）的工作日序列；跨月补格优先用 cells 的 dayType，缺格按周一到周五兜底 */
+        var baseW = new Date(String(c.ymd) + 'T00:00:00');
+        var offW = (baseW.getDay() + 6) % 7;
+        var wdW = [];
+        for (var di = 0; di < 7; di++) {
+          var dtw = new Date(baseW.getTime() + (di - offW) * 86400000);
+          var ymdw = ymdOf(dtw), cellw = mapW[ymdw];
+          var isw = cellw ? (cellw.dayType !== 'weekend' && cellw.dayType !== 'holiday')
+            : (dtw.getDay() >= 1 && dtw.getDay() <= 5);
+          if (isw) wdW.push(ymdw);
+        }
+        if (!wdW.length) return false;
+        var atW = mdW === 'lastNth' ? wdW.length - nthW : nthW - 1;
+        if (atW < 0) atW = 0;
+        if (atW >= wdW.length) atW = wdW.length - 1;
+        return wdW[atW] === c.ymd;
+      }
+      if (type === 'weekly') {
+        var set = String(r.weekdays || '').split(',');
+        for (var i = 0; i < set.length; i++) if (String(set[i]).trim() === String(c.wday)) return true;
+        return false;
+      }
+      /* v0.1.6.68：每月三口径判定——原来只比 monthDay，工作日口径在这里恒为 false，
+         于是出现「日历紫点有、悬浮气泡和右键管理都没有」（紫点走后端 sortKey，气泡/右键走这里）。
+         工作日序列取当前视图月（cells）：dayType 非 weekend/holiday 即工作日（adjustWork 补班算工作日），
+         与后端 IsWorkday 同一口径；不足 N 个时正数取该月最后一个、倒数取该月第一个（用户定稿，宁早勿漏）。 */
+      if (type === 'monthly') {
+        var mm = r.monthlyMode || 'day';
+        /* v0.1.6.90：每月按日期补两条约束——
+           ① 非本月补格不算（原来上月/下月同号格也会冒气泡）；
+           ② 与后端 Math.Min(目标日, 当月天数) 同口径：设「每月 31 号」时，小月落到月末那天也算命中。 */
+        if (mm === 'day') {
+          if (!c.inMonth) return false;
+          var y4 = Number(String(c.ymd).slice(0, 4)), m4 = Number(String(c.ymd).slice(5, 7));
+          var dim4 = new Date(y4, m4, 0).getDate();
+          var tgt4 = Math.max(1, Math.min(31, Number(r.monthDay) || 1));
+          return Math.min(tgt4, dim4) === Number(c.day);
+        }
+        if (!c.inMonth) return false;
+        var wd = [], all = cells.value || [];
+        for (var wi = 0; wi < all.length; wi++) {
+          var cc = all[wi];
+          if (cc && cc.inMonth && cc.dayType !== 'weekend' && cc.dayType !== 'holiday') wd.push(cc);
+        }
+        var nth = Number(r.workdayIndex) || 1, at = -1;
+        if (mm === 'workdayNth') at = Math.min(nth, wd.length) - 1;
+        else if (mm === 'workdayLastNth') at = Math.max(0, wd.length - nth);
+        return at >= 0 && !!wd[at] && wd[at].ymd === c.ymd;
+      }
+      /* v0.1.6.81：「每年」判定补上——此前这里是裸 return false，于是紫点有（走后端 sortKey）
+         而悬浮气泡与右键「管理提醒」都查不到这一天，正是用户报的现象。 */
+      if (type === 'yearly') {
+        if (!c.inMonth) return false;
+        var ym = (r.yearlyMode === 'lunar') ? 'lunar' : 'solar';
+        if (ym === 'solar') {
+          var ds = String(r.date || '');
+          if (ds.length < 10) return false;
+          return Number(ds.slice(5, 7)) === Number(c.ymd.slice(5, 7)) && Number(ds.slice(8, 10)) === Number(c.ymd.slice(8, 10));
+        }
+        var li = lunarOfCell(c.ymd);
+        if (!li) return false;                       // 农历库还没加载完，先不算（加载完会自动刷新渲染）
+        return li.m === Number(r.lunarMonth) && li.d === Number(r.lunarDay);
+      }
+      return false;
+    }
+
+    /* v0.1.6.91：这条提醒在这一天是否有「提前触发点」（用户定稿 A-1：提前那天也要出气泡）。
+       返回 '' 或 '提前 30 分钟 / 提前 1 天'；命中当天（提醒日本身）不算，只标提前日。 */
+    function advLabel(mins) {
+      var m = Number(mins) || 0;
+      if (m % 1440 === 0) return (m / 1440) + ' 天';
+      if (m % 60 === 0) return (m / 60) + ' 小时';
+      return m + ' 分钟';
+    }
+    function ymdAdd(ymd, n) {
+      var d = new Date(String(ymd) + 'T00:00:00');
+      d.setDate(d.getDate() + n);
+      return ymdOf(d);
+    }
+    /* 视图外的日期也要能判工作日：用节假日 store 补 dayType（与 date-model.js 同口径） */
+    function cellOfYmd(ymd) {
+      var cs = cells.value || [];
+      for (var i = 0; i < cs.length; i++) if (cs[i] && cs[i].ymd === ymd) return cs[i];
+      var dt = new Date(String(ymd) + 'T00:00:00'), wd = dt.getDay();
+      var off = false, adj = false;
+      if (window.PiggyManualStore && typeof window.PiggyManualStore.status === 'function') {
+        var st = window.PiggyManualStore.status(dt.getFullYear(), dt.getMonth() + 1, dt.getDate());
+        off = !!(st && st.isOff); adj = !!(st && st.isAdjustWork);
+      }
+      var type = adj ? 'adjustWork' : (off ? 'holiday' : ((wd === 0 || wd === 6) ? 'weekend' : 'workday'));
+      return { ymd: ymd, day: dt.getDate(), inMonth: true, wday: ((wd + 6) % 7) + 1,
+        isWeekend: wd === 0 || wd === 6, dayType: type };
+    }
+    function rmAdvInfo(r, c) {
+      if (!r || !c || r.mode !== 'datetime') return '';
+      var offs = r.advanceOffsets || [];
+      if (!offs.length) return '';
+      var maxOff = 0;
+      for (var i = 0; i < offs.length; i++) { var o0 = Number(offs[i]); if (o0 > maxOff) maxOff = o0; }
+      var maxD = Math.ceil(maxOff / 1440) + 1;
+      var hh = Number(r.hour) || 0, mm = Number(r.minute) || 0;
+      for (var d = 0; d <= maxD; d++) {
+        var ymdX = ymdAdd(c.ymd, d);
+        if (ymdX === c.ymd) continue;                       // 当天不是「提前日」
+        if (!rmOnDay(r, cellOfYmd(ymdX))) continue;
+        var base = new Date(String(ymdX) + 'T00:00:00');
+        base.setHours(hh, mm, 0, 0);
+        for (var k = 0; k < offs.length; k++) {
+          var o = Number(offs[k]);
+          if (!(o > 0)) continue;
+          var p = new Date(base.getTime() - o * 60000);
+          if (ymdOf(p) === c.ymd) return '提前 ' + advLabel(o);
+        }
+      }
+      return '';
+    }
+
+    function dayTipClose() {
+      if (dayTip.value.open) dayTip.value = { open: false, x: 0, y: 0, items: [], more: 0 };
+    }
+
+    function dayTipEnter(c, e) {
+      if (!c || !c.ymd || dayMenu.value.open) return;
+      var arr = rmAll.value || [], list = [];
+      /* v0.1.6.91：命中当天走 rmOnDay；否则若这天是某条提醒的「提前触发日」也列出来（带提前标记） */
+      for (var i = 0; i < arr.length; i++) {
+        var rr = arr[i];
+        if (!rr) continue;
+        var adv = rmAdvInfo(rr, c);
+        if (rmOnDay(rr, c) || adv) list.push({ r: rr, adv: adv });
+      }
+      if (!list.length) { dayTipClose(); return; }
+      function tipMin(x) {
+        if (x.mode === 'countdown') {
+          var at = Number(x.sortKey);
+          if (isFinite(at) && at > 0) {
+            var dd = new Date(at * 1000);
+            if (dd.getFullYear() < 2100) return dd.getHours() * 60 + dd.getMinutes();
+          }
+        }
+        return (Number(x.hour) || 0) * 60 + (Number(x.minute) || 0);
+      }
+      list.sort(function (a, b) {
+        var ta = tipMin(a.r);
+        var tb = tipMin(b.r);
+        if (ta !== tb) return ta - tb;
+        return (a.r.repeatType === 'once' ? 0 : 1) - (b.r.repeatType === 'once' ? 0 : 1);
+      });
+      var shown = list.slice(0, DAY_TIP_MAX), more = list.length - shown.length;
+      var items = [];
+      for (var k = 0; k < shown.length; k++) {
+        var r = shown[k].r, advTag = shown[k].adv || '';
+        items.push({
+          time: (function () {
+            if (r.mode === 'countdown') {
+              var cat = Number(r.sortKey);
+              if (isFinite(cat) && cat > 0) {
+                var cd = new Date(cat * 1000);
+                if (cd.getFullYear() < 2100) return pad(cd.getHours()) + ':' + pad(cd.getMinutes());
+              }
+            }
+            return pad(Number(r.hour) || 0) + ':' + pad(Number(r.minute) || 0);
+          })(),
+          tag: (function () {
+            var base = rmTag(r);
+            if (!advTag) return base;
+            return base ? (base + ' · ' + advTag) : advTag;
+          })(),
+          text: String(r.text || '').trim() || '提醒'
+        });
+      }
+      /* 定位：优先数字块右侧，放不下换左侧；纵向以格心为基准居中后夹在视口内。
+         getBoundingClientRect 给的是视口坐标，气泡是 fixed，两边同源，不需要再按 stage 缩放换算。 */
+      var vw = document.documentElement.clientWidth || 360;
+      var vh = document.documentElement.clientHeight || 560;
+      var h = 14 + items.length * DAY_TIP_ITEM_H + (more ? 14 : 0);
+      var el = e && e.currentTarget ? e.currentTarget : null;
+      var rect = (el && el.getBoundingClientRect) ? el.getBoundingClientRect() : { left: 0, right: 0, top: 0, height: 0 };
+      var x = rect.right + 6;
+      if (x + DAY_TIP_W > vw - 6) x = rect.left - DAY_TIP_W - 6;
+      x = Math.max(6, Math.min(vw - DAY_TIP_W - 6, x));
+      var y = rect.top + (rect.height - h) / 2;
+      y = Math.max(6, Math.min(vh - h - 6, y));
+      dayTip.value = { open: true, x: x, y: y, items: items, more: more };
+      /* v0.1.6.89：气泡宽度是 auto，上面用的是固定上限 DAY_TIP_W 估算——
+         内容短时（比如一条提醒只有 120px）会被误判「右侧放不下」，甩到格子左边甚至更远，
+         表现为「13 号 hover 却在 10 号那块出现」。先出气泡，下一帧用真实宽高重算一次。 */
+      if (window.Vue && Vue.nextTick) Vue.nextTick(function () {
+        var box = document.querySelector('.day-tip');
+        if (!box || !dayTip.value.open) return;
+        var wr = box.getBoundingClientRect();
+        var w = wr.width || DAY_TIP_W, hh = wr.height || h;
+        var nx = rect.right + 6;
+        if (nx + w > vw - 6) nx = rect.left - w - 6;
+        nx = Math.max(6, Math.min(vw - w - 6, nx));
+        var ny = rect.top + (rect.height - hh) / 2;
+        ny = Math.max(6, Math.min(vh - hh - 6, ny));
+        dayTip.value = { open: true, x: nx, y: ny, items: items, more: more };
+      });
+    }
+
+    /* 点卡片外 / 按 Esc 关闭（在按钮上再按一下算"重新开始长按"，不算点外部） */
+    const qrDocDown = function (e) {
+      if (!qrOpen.value) return;
+      const card = document.querySelector('.qr-card');
+      if (card && card.contains(e.target)) return;
+      const wrap = document.querySelector('.qr-wrap');
+      if (wrap && wrap.contains(e.target)) return;
+      qrClose();
+    };
+    const qrDocKey = function (e) {
+      if (qrOpen.value && (e.key === 'Escape' || e.key === 'Esc')) qrClose();
+    };
+    onMounted(function () {
+      document.addEventListener('pointerdown', qrDocDown, true);
+      window.addEventListener('keydown', qrDocKey);
+      document.addEventListener('pointerdown', dayMenuDocDown, true);   // v0.1.6.60
+      window.addEventListener('keydown', dayMenuKey);                   // v0.1.6.60
+      window.addEventListener('blur', dayMenuBlur);                     // v0.1.6.61：失焦关闭兜底
+    });
+    onBeforeUnmount(function () {
+      document.removeEventListener('pointerdown', qrDocDown, true);
+      window.removeEventListener('keydown', qrDocKey);
+      document.removeEventListener('pointerdown', dayMenuDocDown, true);
+      window.removeEventListener('keydown', dayMenuKey);
+      window.removeEventListener('blur', dayMenuBlur);
+      if (gridRO) { gridRO.disconnect(); gridRO = null; }
+      qrClearHold(); qrUnbind();
+      if (qrToastTimer) { clearTimeout(qrToastTimer); qrToastTimer = null; }
+    });
+    function openSettings() { try { window.Bridge && window.Bridge.invoke('OpenSettings'); } catch (_e) {} }
+    function openAbout() { try { window.Bridge && window.Bridge.invoke('OpenAbout'); } catch (_e) {} }
+
+    /* v0.1.6.57：右上角隐藏按钮 —— 走 SetWidgetVisible(false)（壳层写 widgetVisible 到 config.ini 并即时隐藏）；
+       隐藏后只能从托盘菜单「显示小组件」恢复，故这里不做任何前端本地态记忆。 */
+    function onHideWidget() {
+      try {
+        if (window.Bridge && window.Bridge.invoke) {
+          var p = window.Bridge.invoke('SetWidgetVisible', false);
+          if (p && p.catch) p.catch(function () {});
+        }
+      } catch (_e) {}
+    }
+
+    return { stageEl, gridEl, barBands, timeText, dateLine, viewTitle, isCurrentMonth, weekNames: WEEK_CN, cells, pillStyle, subStyle, barStyle, sub2Style, circleStyle, badgeStyle, extraFestEnabled, extraFestColor, extraFestStyle, extraJieqiEnabled, extraJieqiColor, extraJieqiStyle, onDragStart, onResizeStart, prevMonth, nextMonth, gotoToday, onWheel, openAutoShutdown, openReminder, openSettings, openAbout, toolSvg, widgetLocked, widgetOpacity, autoShutdownActive, reminderActive, texture, dragging, lockHit, onLockToggle, onHideWidget,
+      shutdownCd, reminderCd,
+      qrHover, qrOpen, qrPressing, qrH, qrM, qrText, qrSound, qrBusy, qrErr, qrToast, qrMinutes, qrWheel,
+      qrQuickMin: QR_QUICK_MIN, qrQuickHour: QR_QUICK_HOUR, qrPickMin, qrPickHour,
+      qrDown, qrClick, qrClose, qrPick, qrOnInput, qrAdd,
+      dayMenu, dayMenuOpen, dayMenuAdd, dayMenuManage, rmDotMap, rmOnDay, dayTip, dayTipEnter, dayTipClose, dayInfo, dayInfoShow };  /* v0.1.6.85：导出 rmOnDay 供自检逐日核对 */
+  }
+}).use(ElementPlus).mount('#app');
+/* v0.1.6.75：主窗首帧耗时打点（诊断用） */
+(function () {
+  var raf = window.requestAnimationFrame || function (c) { setTimeout(c, 16); };
+  raf(function () { raf(function () {
+    var seg = '';
+    try { if (window.__pm) { var a = []; for (var i = 0; i < window.__pm.length; i++) a.push(window.__pm[i][0] + '=' + window.__pm[i][1]); seg = ' seg[' + a.join(' ') + ']'; } } catch (e) { }
+    try { if (window.Bridge && window.Bridge.invoke) window.Bridge.invoke('LogLine', '[PERF] widget firstFrame=' + Math.round(performance.now()) + 'ms' + seg); } catch (e) { }
+  }); });
+})();
+</script>
+</body>
+</html>
