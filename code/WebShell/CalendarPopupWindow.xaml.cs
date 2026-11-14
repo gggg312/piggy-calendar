@@ -646,6 +646,14 @@ namespace PiggyCalendar.WebShell
         [DllImport("dwmapi.dll")]
         private static extern int DwmExtendFrameIntoClientArea(IntPtr hwnd, ref MARGINS margins);
 
+        // v1.0.2：Win11 上 SetWindowRgn 对 DWM 合成窗口完全无效（实测设前后四角像素一致），
+        // 能真正裁掉四角窗口矩形的是 DWM 自己的系统圆角。
+        [DllImport("dwmapi.dll")]
+        private static extern int DwmSetWindowAttribute(IntPtr hwnd, int dwAttribute, ref int pvAttribute, int cbAttribute);
+
+        private const int DWMWA_WINDOW_CORNER_PREFERENCE = 33;
+        private const int DWMWCP_ROUND = 2;
+
         private struct AccentPolicy
         {
             public int AccentState;
@@ -712,16 +720,35 @@ namespace PiggyCalendar.WebShell
 
                 int state = 0;
                 int color = 0;
+                bool win11 = IsWindows11();
                 if (!_dragBlank && AppConfig.WidgetTexture == "glass")
                 {
-                    state = (AppConfig.GlassFinish == "frosted") ? 4 : 3;   // 默认清亮 = AccentState 3
+                    // v1.0.1：Win11（build>=22000）的 DWM 已不再渲染 ACCENT_ENABLE_BLURBEHIND(3)：
+                    // 调用仍返回 1，但窗口退化成不透明深色（Win11 实测现象，Win10 正常）。
+                    // 故 Win11 上清亮/磨砂统一走 Acrylic(4)；另 Acrylic 的染色 alpha 为 0 时也不画模糊，
+                    // 给一个极小下限（约 3%），视觉上仍接近全通透。
+                    // v1.0.3：Acrylic 半径不可调，两档在系统层没有档差，只能靠染色区分——
+                    // 清亮档染色系数压到 0.4（更淡更透），磨砂档抬到 0.9（更沉），配合前端去掉的噪点层，
+                    // 观感向 Win10 的"清亮=BlurBehind 通透 / 磨砂=Acrylic 厚重"靠拢。
+                    // v1.0.4：Win11 不再区分清亮/磨砂——Acrylic 半径不可调，靠染色拉出的两档差异肉眼不可辨（实测只差 3 个 RGB 值）。
+                    // 故 Win11 统一按清亮档（k=0.4）出图，设置面板的「质感」选项在 Win11 上隐藏（见 panel.html）。
+                    // Win10 保持原两档：清亮 = BlurBehind(3) 通透，磨砂 = Acrylic(4) 厚重。
+                    bool twoFinish = !win11;
+                    bool frosted = AppConfig.GlassFinish == "frosted";
+                    state = (twoFinish && !frosted) ? 3 : 4;
                     bool light = AppConfig.WidgetTheme == "light";
-                    int a = (int)Math.Round(Math.Max(0, Math.Min(100, AppConfig.GlassTintPercent)) * 0.8 * 2.55);
+                    double k = (twoFinish && frosted) ? 0.9 : 0.4;
+                    int a = (int)Math.Round(Math.Max(0, Math.Min(100, AppConfig.GlassTintPercent)) * k * 2.55);
+                    if (win11 && a < 8) a = 8;
                     int r = light ? 0xF2 : 0x1F;   // 与测试程序同基色：深 #1F2329 / 浅 #F2F4F7
                     int g = light ? 0xF4 : 0x23;
                     int b = light ? 0xF7 : 0x29;
                     color = (a << 24) | (b << 16) | (g << 8) | r;
                 }
+
+                // v1.0.2：Win11 必须先设系统圆角、后设 accent——SetWindowCompositionAttribute
+                // 会把 DWM 圆角状态冲回直角，顺序反了四角就又伸出直角块（实测验证）。
+                if (win11) ApplyWin11RoundCorner(hwnd);
 
                 AccentPolicy policy = new AccentPolicy();
                 policy.AccentState = state;
@@ -738,13 +765,59 @@ namespace PiggyCalendar.WebShell
                     data.SizeOfData = size;
                     int ret = SetWindowCompositionAttribute(hwnd, ref data);
                     AppLog.Write("[WIDGET] accent state=" + state + " color=0x" + color.ToString("X8")
-                        + " blank=" + _dragBlank + " ret=" + ret);
+                        + " blank=" + _dragBlank + " ret=" + ret + " win11=" + win11);
                 }
                 finally { Marshal.FreeHGlobal(ptr); }
             }
             catch (Exception ex)
             {
                 AppLog.Write("[WIDGET] ApplyAcrylic 异常：" + ex.Message);
+            }
+        }
+
+        /// <summary>
+        /// 是否 Windows 11（build >= 22000）。
+        /// 用注册表而非 Environment.OSVersion：后者在未声明 manifest 兼容级别时会被系统伪装成 Win8.1（build 9600）。
+        /// </summary>
+        private static bool IsWindows11()
+        {
+            try
+            {
+                using (var key = Microsoft.Win32.Registry.LocalMachine.OpenSubKey(
+                    @"SOFTWARE\Microsoft\Windows NT\CurrentVersion"))
+                {
+                    if (key != null)
+                    {
+                        object v = key.GetValue("CurrentBuildNumber");
+                        if (v != null)
+                        {
+                            int build;
+                            if (int.TryParse(v.ToString(), out build)) return build >= 22000;
+                        }
+                    }
+                }
+            }
+            catch { }
+            return false;
+        }
+
+        /// <summary>
+        /// Win11 专用：让 DWM 把窗口裁成系统圆角（DWMWCP_ROUND，半径约 8px）。
+        /// 这是 Win11 上唯一能真正去掉四角直角块的途径——SetWindowRgn 在该系统上不再生效，
+        /// 而窗口矩形的四角会被 accent / 窗口边框染色，看起来就是"圆角外面伸出直角"。
+        /// 注意必须在每次 SetWindowCompositionAttribute 之前调用，否则圆角会被 accent 重置。
+        /// </summary>
+        private void ApplyWin11RoundCorner(IntPtr hwnd)
+        {
+            try
+            {
+                int pref = DWMWCP_ROUND;
+                int hr = DwmSetWindowAttribute(hwnd, DWMWA_WINDOW_CORNER_PREFERENCE, ref pref, sizeof(int));
+                if (hr != 0) AppLog.Write("[WIDGET] dwm corner hr=" + hr);
+            }
+            catch (Exception ex)
+            {
+                AppLog.Write("[WIDGET] ApplyWin11RoundCorner 异常：" + ex.Message);
             }
         }
 

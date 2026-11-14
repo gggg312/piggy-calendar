@@ -964,9 +964,9 @@ html[data-theme="light"] .rm-edit-card{background:rgba(124,111,240,.06)}
                   </div>
                 </div>
 
-                <!-- 毛玻璃参数：质感 + 浓度，与材质同卡片 -->
+                <!-- v1.0.4：Win11 只保留一档毛玻璃（清亮观感），「质感」选项在 Win11 上隐藏 -->
                 <template v-if="apTexture === 'glass'">
-                  <div class="ap-sub">
+                  <div class="ap-sub" v-if="!apIsWin11">
                     <div class="set-label">质感</div>
                     <div class="seg-group">
                       <button type="button" class="seg-btn" :class="{ on: apGlassFinish === 'clear' }" @click="onGlassFinishChange('clear')">清亮</button>
@@ -2240,6 +2240,7 @@ createApp({
     /* ---------- 小组件外观（v0.1.6.30：色系共用 + 每材质独立参数） ---------- */
     const apPlainOpacity = ref(100);              // 纯色透明度 0~100
     const apGlassFinish = ref('clear');           // 毛玻璃质感 clear（默认，AccentState=3）/ frosted（AccentState=4）
+    const apIsWin11 = ref(false);                 // v1.0.4：Win11 只保留一档毛玻璃，质感选项在此平台隐藏
     const apGlassTint = ref(20);                  // 毛玻璃浓度 0~100（100 ≈ 测试程序 80）
     const apLocked = ref(false);
     const apTheme = ref('dark'); // v0.1.6.8：小组件主题 深色/浅色，三材质共用
@@ -2252,6 +2253,7 @@ createApp({
         apPlainOpacity.value = po != null ? po : 100;
         var fin = a.glassFinish;
         apGlassFinish.value = (fin === 'frosted') ? 'frosted' : 'clear';
+        apIsWin11.value = !!a.isWin11;   // v1.0.4：Win11 隐藏「质感」选项
         var tint = a.glassTint;
         apGlassTint.value = tint != null ? tint : 20;
         apLocked.value = !!a.locked;
@@ -3375,7 +3377,7 @@ var extraCardOpen = ref(false);
       asHourNum, asMinNum, asMonthDayNum, asAdvanceNum, onNumWheel, onNumBlur,
       asStatusText, asActive, asMsg, asErr,
       onAsEnabledChange, doAsStart, doCancel,
-      apPlainOpacity, apGlassFinish, apGlassTint, apLocked, apTheme, apTexture,
+      apPlainOpacity, apGlassFinish, apGlassTint, apLocked, apTheme, apTexture, apIsWin11,
       iconOf, syncStateText,
       onToggle, onClockMode, doSyncNow, openLink,
       extra, onExtraToggle, onExtraColor, onExtraStyle, extraOpen, toggleExtraOpen,

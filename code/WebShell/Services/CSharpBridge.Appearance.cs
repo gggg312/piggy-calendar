@@ -32,8 +32,50 @@ namespace PiggyCalendar.WebShell.Services
                 ["glassFinish"] = AppConfig.GlassFinish,
                 ["glassTint"] = AppConfig.GlassTintPercent,
                 ["theme"] = AppConfig.WidgetTheme,
-                ["texture"] = AppConfig.WidgetTexture
+                ["texture"] = AppConfig.WidgetTexture,
+                ["panelRadius"] = PanelRadius(),
+                // v1.0.4：下发给前端，Win11 上隐藏「质感（清亮/磨砂）」选项——Win11 只保留一档毛玻璃
+                ["isWin11"] = HostIsWindows11()
             });
+        }
+
+        /// <summary>
+        /// v1.0.3：面板圆角半径（前端 --panel-radius）。
+        /// 必须与窗口实际圆角同半径，否则面板弧与窗口边框弧错位——视觉上"圆角比边框大、探出边框"。
+        ///   Win11：DWM 系统圆角固定 8px（DwmSetWindowAttribute 33=ROUND），前端也必须 8px 才能同心；
+        ///   Win10：SetWindowRgn 按 14*dpi 裁圆角，前端保持 14px。
+        /// 平台判断读注册表 CurrentBuildNumber，不用 Environment.OSVersion（未声明 manifest 时会被伪装成 9600）。
+        /// </summary>
+        private static int PanelRadius()
+        {
+            return HostIsWindows11() ? 8 : 14;
+        }
+
+        private static bool _isWin11Known;
+        private static bool _isWin11;
+
+        private static bool HostIsWindows11()
+        {
+            if (_isWin11Known) return _isWin11;
+            _isWin11Known = true;
+            try
+            {
+                using (var key = Microsoft.Win32.Registry.LocalMachine.OpenSubKey(
+                    @"SOFTWARE\Microsoft\Windows NT\CurrentVersion"))
+                {
+                    if (key != null)
+                    {
+                        object v = key.GetValue("CurrentBuildNumber");
+                        if (v != null)
+                        {
+                            int build;
+                            if (int.TryParse(v.ToString(), out build)) _isWin11 = build >= 22000;
+                        }
+                    }
+                }
+            }
+            catch { }
+            return _isWin11;
         }
 
         /// <summary>

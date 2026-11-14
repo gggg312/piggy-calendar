@@ -47,6 +47,8 @@ window.addEventListener('unhandledrejection', function (e) {
   /* v0.1.6.26 毛毛玻璃形态：色系 × 质感(纯色/毛毛玻璃) × 透明度；纯色回退早期边框线，毛毛玻璃加模糊/增色/亮边/折射 */
   --plain-border:rgba(255,255,255,0.08);
   --glass-blur:16px; --glass-saturate:1.6;
+  /* v1.0.3 面板圆角：必须与窗口圆角同一半径，否则会看到两条弧错位（Win11 由后端下发 8px 对齐 DWM 系统圆角） */
+  --panel-radius:14px;
   --edge-line:rgba(255,255,255,0.14);
   --rim-lt:rgba(255,255,255,0.32); --rim-rb:rgba(255,255,255,0.04);
   --div:rgba(255,255,255,0.16); /* v0.1.6.28 上下分区线 */
@@ -71,7 +73,7 @@ body{font-family:'Microsoft YaHei UI','Microsoft YaHei','微软雅黑','PingFang
 
 #app{height:100%;display:flex;flex-direction:column;align-items:center;justify-content:center;background:transparent;overflow:hidden;position:relative}
 /* v0.1.6.9：窗口透明后由前端统一控制面板背景（主题色 + 透明度实时，圆角 14 匹配窗口），内容在其上不透明 */
-.panel-bg{position:absolute;inset:0;background:rgba(var(--panel-rgb), var(--panel-alpha, 1));border-radius:14px;pointer-events:none;z-index:0;
+.panel-bg{position:absolute;inset:0;background:rgba(var(--panel-rgb), var(--panel-alpha, 1));border-radius:var(--panel-radius, 14px);pointer-events:none;z-index:0;
   border:1px solid var(--plain-border)} /* v0.1.6.26 纯色卡回退早期边框线 */
 /* v0.1.6.26 毛玻璃形态：模糊+增色+叠白+亮边+折射（rim 左上亮右下暗） */
 .panel-bg.glass{
@@ -91,7 +93,7 @@ body{font-family:'Microsoft YaHei UI','Microsoft YaHei','微软雅黑','PingFang
   box-shadow:inset 0 1px 0 rgba(255,255,255,0.40), inset 0 -1px 0 rgba(0,0,0,0.50), 0 12px 28px var(--shadow);
   overflow:hidden;
 }
-.panel-bg.metal::before{content:"";position:absolute;inset:0;border-radius:13px;pointer-events:none;
+.panel-bg.metal::before{content:"";position:absolute;inset:0;border-radius:calc(var(--panel-radius, 14px) - 1px);pointer-events:none;
   background:linear-gradient(108deg, rgba(255,255,255,0.10) 0%, rgba(255,255,255,0.03) 32%, rgba(255,255,255,0) 56%, rgba(0,0,0,0.30) 100%)}
 .panel-bg.metal::after{content:"";position:absolute;left:-25%;right:-25%;top:10%;height:30%;pointer-events:none;
   background:linear-gradient(100deg, transparent 0%, rgba(255,255,255,0.10) 36%, rgba(255,255,255,0.26) 52%, rgba(255,255,255,0.09) 68%, transparent 100%);
@@ -107,6 +109,10 @@ body{font-family:'Microsoft YaHei UI','Microsoft YaHei','微软雅黑','PingFang
   -webkit-backdrop-filter:none;
   backdrop-filter:none;
 }
+/* v1.0.3 去掉磨砂颗粒层：用户明确只要 Win10 那种清亮/磨砂的观感，不要颗粒质感。
+   Win11 的 Acrylic 模糊半径不可调，两档的差别改由后端染色浓度区分——清亮档染色更淡更透，
+   磨砂档染色更沉（见 CSharpBridge / CalendarPopupWindow.ApplyAcrylic 里的系数）。
+   原噪点层（SVG feTurbulence + mix-blend-mode:overlay，opacity .26 / 浅色 .16 + multiply）已整段移除。 */
 
 /* 全局禁止文本选中：拖动窗口/缩放时不再高亮时钟、日期、网格文字 */
 body, #app, .stage, .stage *{user-select:none;-webkit-user-select:none}
@@ -556,7 +562,7 @@ html[data-theme="light"] .panel-bg.metal::after{
 
   <!-- v0.1.6.9：面板背景层（主题色 + 透明度实时；窗口已透明，圆角在此匹配）；v0.1.6.27 金属固定不透明；v0.1.6.28 毛毛玻璃不再叠任何写死色块 -->
   <!-- v0.1.6.30：毛玻璃让位——alpha 置 0 交给系统 Acrylic 真模糊 + 染色；拖动中临时补实心底色 -->
-  <div class="panel-bg" :class="{ glass: texture==='glass', metal: texture==='metal', dragging: dragging }" :style="{ '--panel-alpha': texture==='metal' ? 1 : (texture==='glass' ? (dragging ? 1 : 0) : widgetOpacity / 100) }"></div>
+  <div class="panel-bg" :class="{ glass: texture==='glass', metal: texture==='metal', frosted: glassFinish==='frosted', dragging: dragging }" :style="{ '--panel-alpha': texture==='metal' ? 1 : (texture==='glass' ? (dragging ? 1 : 0) : widgetOpacity / 100) }"></div>
 
   <!-- 缩放手柄层：8 向贴客户区四边（留在 stage 外层，位置不随内容缩放偏移）；按下经桥 BeginResize 等比缩放 -->
   <div class="resize-layer">
@@ -829,8 +835,10 @@ createApp({
     }
     const reminderActive = ref(false);     // v0.1.6.23：提醒入口选中态（当天有提醒）
     const texture = ref('plain');          // v0.1.6.26 小组件质感 plain/glass；v0.1.6.27 增加 metal
+    const glassFinish = ref('clear');      // v1.0.2 毛玻璃质感档 clear(清亮)/frosted(磨砂)，磨砂档叠噪点颗粒
     const dragging = ref(false);           // v0.1.6.30 拖动中：系统 Acrylic 被撤掉，面板改补实心底色
     let lockHitTimer = null;
+    /* v1.0.2：应用毛玻璃质感档；必须在 setup 作用域内声明，模板才能响应 */
 
     /* v0.1.6.8：应用主题到根元素 data-theme（浅色/深色），CSS 按 html[data-theme] 覆盖 token */
     function applyTheme(t) {
@@ -841,6 +849,16 @@ createApp({
     /* v0.1.6.26：应用质感到面板背景（纯色/毛玻璃）；v0.1.6.27 增加金属 */
     function applyTexture(t) {
       texture.value = (t === 'glass' || t === 'metal') ? t : 'plain';
+    }
+    /* v1.0.2：应用毛玻璃质感档（清亮/磨砂） */
+    function applyGlassFinish(f) {
+      glassFinish.value = (f === 'frosted') ? 'frosted' : 'clear';
+    }
+    /* v1.0.3：应用面板圆角半径——必须与窗口圆角一致（Win11 = DWM 系统圆角 8px，Win10 = SetWindowRgn 14px），
+       否则面板弧与窗口边框弧半径不同，视觉上就是"圆角比边框大、探出边框"的双弧错位 */
+    function applyPanelRadius(r) {
+      const v = (typeof r === 'number' && isFinite(r) && r > 0) ? r : 14;
+      document.documentElement.style.setProperty('--panel-radius', v + 'px');
     }
 
     function onLockToggle() {
@@ -1476,6 +1494,7 @@ function applyRmDotColor(key) {
           if (p && typeof p.jieqiEnabled !== 'undefined') extraJieqiEnabled.value = !!p.jieqiEnabled;
           if (p && typeof p.jieqiColor !== 'undefined') extraJieqiColor.value = p.jieqiColor;
           if (p && typeof p.jieqiStyle !== 'undefined') extraJieqiStyle.value = p.jieqiStyle === 'solid' ? 'solid' : 'outline';
+          if (p && typeof p.widgetGlassFinish !== 'undefined') applyGlassFinish(p.widgetGlassFinish);
           if (p && p.holidayStyle) loadHolidayStyle();
         });
       }
@@ -1489,6 +1508,8 @@ function applyRmDotColor(key) {
             if (a && typeof a.opacityPercent !== 'undefined') widgetOpacity.value = a.opacityPercent;
             if (a && typeof a.theme !== 'undefined') applyTheme(a.theme);
             if (a && typeof a.texture !== 'undefined') applyTexture(a.texture);
+            if (a && typeof a.glassFinish !== 'undefined') applyGlassFinish(a.glassFinish);
+            if (a && typeof a.panelRadius !== 'undefined') applyPanelRadius(a.panelRadius);
           } catch (_e) {}
         }).catch(function () {});
       }
@@ -2197,7 +2218,7 @@ function applyRmDotColor(key) {
       } catch (_e) {}
     }
 
-    return { stageEl, gridEl, barBands, timeText, dateLine, viewTitle, isCurrentMonth, weekNames: WEEK_CN, cells, pillStyle, subStyle, barStyle, sub2Style, circleStyle, badgeStyle, extraFestEnabled, extraFestColor, extraFestStyle, extraJieqiEnabled, extraJieqiColor, extraJieqiStyle, onDragStart, onResizeStart, prevMonth, nextMonth, gotoToday, onWheel, openAutoShutdown, openReminder, openSettings, openAbout, toolSvg, widgetLocked, widgetOpacity, autoShutdownActive, reminderActive, texture, dragging, lockHit, onLockToggle, onHideWidget,
+    return { stageEl, gridEl, barBands, timeText, dateLine, viewTitle, isCurrentMonth, weekNames: WEEK_CN, cells, pillStyle, subStyle, barStyle, sub2Style, circleStyle, badgeStyle, extraFestEnabled, extraFestColor, extraFestStyle, extraJieqiEnabled, extraJieqiColor, extraJieqiStyle, onDragStart, onResizeStart, prevMonth, nextMonth, gotoToday, onWheel, openAutoShutdown, openReminder, openSettings, openAbout, toolSvg, widgetLocked, widgetOpacity, autoShutdownActive, reminderActive, texture, dragging, glassFinish, lockHit, onLockToggle, onHideWidget,
       shutdownCd, reminderCd,
       qrHover, qrOpen, qrPressing, qrH, qrM, qrText, qrSound, qrBusy, qrErr, qrToast, qrMinutes, qrWheel,
       qrQuickMin: QR_QUICK_MIN, qrQuickHour: QR_QUICK_HOUR, qrPickMin, qrPickHour,
