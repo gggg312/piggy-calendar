@@ -93,6 +93,7 @@
       <SubType>Code</SubType>
     </Compile>
     <Compile Include="Services\AppLog.cs" />
+    <Compile Include="Services\RunMarker.cs" />
     <Compile Include="Services\AppConfig.cs" />
     <Compile Include="Services\IniFileHelper.cs" />
     <Compile Include="Services\AtomicFile.cs" />

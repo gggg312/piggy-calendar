@@ -25,6 +25,53 @@ namespace PiggyCalendar.WebShell
             new System.Collections.Generic.Dictionary<string, PanelHostWindow>();
         private ShutdownRemindWindow _remindWindow; // 关机前提醒弹窗单例（v0.1.6.10）
         private ReminderRemindWindow _reminderRemindWindow; // 提醒到点弹窗单例（v0.1.6.23）
+        private DispatcherTimer _heartbeat;   // v1.0.7 心跳
+        private DateTime _startedAt = DateTime.Now;
+
+        /// <summary>
+        /// v1.0.7 心跳：每 5 分钟一行，记 PID / 存活时长 / 工作集内存 / 线程数 / 句柄数。
+        /// 进程被静默结束时日志不会再有下一行，最后一条心跳的时刻就是"它还活着"的最后一个时间点；
+        /// 再配合下次启动的「上次未正常退出」，可以直接圈出退出时间窗，不必等用户复现。
+        /// 同时内存/线程/句柄是泄漏的常用指标，长时间挂机的软件借此能提前发现增长趋势。
+        /// </summary>
+        private void StartHeartbeat()
+        {
+            try
+            {
+                _startedAt = DateTime.Now;
+                WriteHeartbeat("启动基线");
+                _heartbeat = new DispatcherTimer { Interval = TimeSpan.FromMinutes(5) };
+                _heartbeat.Tick += (s, e) => WriteHeartbeat("心跳");
+                _heartbeat.Start();
+            }
+            catch (Exception ex) { AppLog.Write("[HB] 心跳启动失败：" + ex.Message); }
+        }
+
+        private void WriteHeartbeat(string tag)
+        {
+            try
+            {
+                var p = System.Diagnostics.Process.GetCurrentProcess();
+                AppLog.Write("[HB] " + tag + " pid=" + p.Id
+                    + " 已运行=" + FormatUptime(DateTime.Now - _startedAt)
+                    + " 内存=" + (p.WorkingSet64 / 1024 / 1024) + "MB"
+                    + " 线程=" + p.Threads.Count
+                    + " 句柄=" + p.HandleCount);
+
+                // 顺带把运行标记里的「最后活动时间」推到此刻。
+                // 进程被强杀时来不及执行任何代码，但这条已落盘的时间戳能证明它活到过哪一刻，
+                // 下次启动据此算真实存活时长，而不是拿「下次启动时间」硬减（那会把死后的空档算进寿命）。
+                RunMarker.TouchAlive();
+            }
+            catch (Exception ex) { AppLog.Write("[HB] 写心跳失败：" + ex.Message); }
+        }
+
+        private static string FormatUptime(TimeSpan s)
+        {
+            if (s.TotalDays >= 1) return ((int)s.TotalDays) + "天" + s.Hours + "时" + s.Minutes + "分";
+            if (s.TotalHours >= 1) return s.Hours + "时" + s.Minutes + "分";
+            return s.Minutes + "分" + s.Seconds + "秒";
+        }
 
         private static string SingleInstanceMutexName
         {
@@ -52,6 +99,8 @@ namespace PiggyCalendar.WebShell
 
             // 2. 日志与配置
             AppLog.Init();
+            // v1.0.7：先判上次是否异常退出（标记文件仍在 → 上一轮没走完退出流程），再写本次启动行
+            try { RunMarker.CheckPreviousRun(); } catch { }
             AppLog.Write("[APP] 小猪日历启动，版本=" + System.Reflection.Assembly.GetExecutingAssembly().GetName().Version);
             AppConfig.LoadFromIni();
 
@@ -161,6 +210,9 @@ namespace PiggyCalendar.WebShell
             ApplyWidgetVisibility(AppConfig.WidgetVisible);
 
             AppLog.Write("[APP] 启动完成：托盘 + 桌面小组件就绪");
+            // v1.0.7：启动流程走完 → 落本次运行标记 + 开心跳
+            RunMarker.MarkRunning();
+            StartHeartbeat();
         }
 
         private void ShowWidget()
@@ -388,6 +440,46 @@ namespace PiggyCalendar.WebShell
                 AppLog.Write("[APP] 任务未观测异常：" + args.Exception);
                 args.SetObserved();
             };
+
+            // v1.0.7 退出埋点：这三条路径以前完全不留痕，是"程序不知何时就没了"最难查的空白。
+            // 1）注销 / 关机：属于预期内结束，写完日志后把运行标记清掉（否则下次启动会误报成异常退出）。
+            SessionEnding += (s, args) =>
+            {
+                try
+                {
+                    // 注意：WPF 的 SessionEndingCancelEventArgs 只有 Cancel，没有 Reason
+                    // （Reason 在 WinForms 的 SessionEndingEventArgs 上）。这里只能记「会话结束」。
+                    AppLog.Write("[APP] 系统会话结束：注销或关机导致进程退出");
+                    try { if (_heartbeat != null) _heartbeat.Stop(); } catch { }
+                    WriteHeartbeat("退出前");
+                    RunMarker.ClearRunning();
+                }
+                catch { }
+            };
+            // 2）任何 Environment.Exit 路径（含第二实例拦截、WebView2 缺失）：留一行再走
+            AppDomain.CurrentDomain.ProcessExit += (s, args) =>
+            {
+                try
+                {
+                    AppLog.Write("[APP] ProcessExit 触发，进程即将结束；" + StopReason());
+                    RunMarker.ClearRunning();
+                }
+                catch { }
+            };
+        }
+
+        /// <summary>v1.0.7：退出原因线索（谁调的退出很难直接拿到，至少把关键上下文留下来）。</summary>
+        private string StopReason()
+        {
+            try
+            {
+                bool widgetVisible = _widget != null && _widget.IsVisible;
+                int panels;
+                lock (_panels) { panels = _panels.Count; }
+                return "小组件可见=" + widgetVisible + " 打开的面板数=" + panels
+                    + " 托盘存在=" + (_tray != null);
+            }
+            catch { return "上下文读取失败"; }
         }
 
         /// <summary>自动关机设置窗口（独立窗口，取代原工具中心，小组件底部原位按钮触发）。</summary>
@@ -570,6 +662,8 @@ namespace PiggyCalendar.WebShell
         private void ExitApplication()
         {
             AppLog.Write("[APP] 用户从托盘退出，开始清理");
+            try { if (_heartbeat != null) _heartbeat.Stop(); } catch { }
+            WriteHeartbeat("退出前");
             try { _tray?.Dispose(); } catch { }
             try { _widget?.Close(); } catch { }
             Shutdown(0);
@@ -577,6 +671,9 @@ namespace PiggyCalendar.WebShell
 
         protected override void OnExit(ExitEventArgs e)
         {
+            try { if (_heartbeat != null) _heartbeat.Stop(); } catch { }
+            AppLog.Write("[APP] OnExit 已执行（正常退出路径），退出码=" + e.ApplicationExitCode);
+            RunMarker.ClearRunning();
             try { _tray?.Dispose(); } catch { }
             _singleInstance?.ReleaseMutex();
             _singleInstance?.Dispose();

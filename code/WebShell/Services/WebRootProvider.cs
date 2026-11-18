@@ -62,7 +62,9 @@ namespace PiggyCalendar.WebShell.Services
                     if (packed != null)
                     {
                         cached = packed;
-                        AppLog.Write("[WEBROOT] 已解压内嵌前端：" + packed);
+                        // 中性表述：ExtractEmbedded 可能"比对一致直接复用"，也可能真解压了一遍，
+                        // 细节由它内部的「跳过解压」/「解压完成 ok=」两行给出，这里不再断言"已解压"。
+                        AppLog.Write("[WEBROOT] 前端目录就绪：" + packed);
                     }
                     else
                     {
@@ -108,14 +110,18 @@ namespace PiggyCalendar.WebShell.Services
             string indexPath = Path.Combine(dir, "index.html");
             string panelPath = Path.Combine(dir, "panel.html");
 
-            // 同版本已解压且关键文件到位 → 直接复用（不每次启动重写，避免无谓 IO）
-            try
+            // v1.0.6：不再"目录存在即复用"。
+            // 版本号被要求保持 1.0.0.0 不变，而同版本目录名就等于版本号 —— 只要 index.html/panel.html
+            // 还在那儿，改了前端也会一直吃旧文件（表现为：EXE 换成新版，界面却还是老的一套）。
+            // 改成逐字节比对：与内嵌资源完全一致才跳过，任何一处不一致就重写。
+            bool upToDate = IsUpToDate(dir);
+            if (upToDate)
             {
-                if (File.Exists(indexPath) && File.Exists(panelPath) && new FileInfo(indexPath).Length > 0) return dir;
+                AppLog.Write("[WEBROOT] 前端与内嵌资源一致，跳过解压：" + dir);
+                return dir;
             }
-            catch { }
 
-            // 只清理自己这本版目录，再重建
+            // 清理旧目录（失败也无妨，下面逐文件覆盖写）
             try { if (Directory.Exists(dir)) Directory.Delete(dir, true); }
             catch { }
             Directory.CreateDirectory(dir);
@@ -151,6 +157,44 @@ namespace PiggyCalendar.WebShell.Services
 
             if (!File.Exists(indexPath) || !File.Exists(panelPath)) return null;
             return dir;
+        }
+
+        /// <summary>
+        /// v1.0.6：磁盘目录与内嵌资源逐字节比对。全部一致才认为是最新，任一文件缺失/大小不符/内容不同都算过期。
+        /// 只在启动时跑一次（Resolve 有缓存），18 个文件几百 KB，开销可忽略。
+        /// </summary>
+        private static bool IsUpToDate(string dir)
+        {
+            try
+            {
+                for (int i = 0; i < Map.GetLength(0); i++)
+                {
+                    string target = Path.Combine(dir, Map[i, 1]);
+                    byte[] data = ReadResource(ResourcePrefix + Map[i, 0]);
+                    if (data == null || data.Length == 0) return false;   // 资源缺失，交给下面报 miss
+                    if (!IsSameBytes(target, data)) return false;
+                }
+                return true;
+            }
+            catch { return false; }
+        }
+
+        private static bool IsSameBytes(string path, byte[] data)
+        {
+            try
+            {
+                if (!File.Exists(path)) return false;
+                FileInfo fi = new FileInfo(path);
+                if (fi.Length != data.Length) return false;
+                byte[] cur = File.ReadAllBytes(path);
+                if (cur.Length != data.Length) return false;
+                for (int i = 0; i < data.Length; i++)
+                {
+                    if (cur[i] != data[i]) return false;
+                }
+                return true;
+            }
+            catch { return false; }
         }
 
         private static byte[] ReadResource(string resourceName)

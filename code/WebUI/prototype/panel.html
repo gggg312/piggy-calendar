@@ -279,6 +279,24 @@ body{font-family:'Microsoft YaHei UI','Microsoft YaHei','微软雅黑','PingFang
 .ap-sub{margin-top:16px} /* v0.1.6.30：每个材质自己的参数区，与材质分段同卡片、用间距分节 */
 .ap-head{display:flex;align-items:baseline;justify-content:space-between;gap:12px}
 .ap-slider-row{display:flex;align-items:center;gap:14px;margin-top:8px}
+.ap-head-auto{margin-bottom:10px} /* v1.0.5：自动浓度开关与下方「微调」之间留出间距 */
+/* v1.0.6 皮肤卡：横排一列皮肤缩略图，直接用该皮肤本身的配色当预览，选完不用再靠想象。
+   v1.0.7 六档（补回「金属·浅」） */
+.skin-grid{display:grid;grid-template-columns:repeat(6,1fr);gap:8px;margin-top:10px}
+.skin-card{display:flex;flex-direction:column;align-items:center;gap:6px;padding:8px 3px 7px;
+  border:1px solid rgba(255,255,255,.09);border-radius:10px;background:rgba(255,255,255,.04);
+  cursor:pointer;font-family:inherit;transition:border-color .15s,background .15s}
+.skin-card:hover{background:rgba(255,255,255,.08)}
+.skin-card.on{border-color:#7C6FF0;background:rgba(124,111,240,.16)}
+.skin-thumb{display:block;width:100%;height:30px;border-radius:6px;box-sizing:border-box;border:1px solid rgba(255,255,255,.07)}
+.st-ink{background:linear-gradient(160deg,#34343A,#17171A)}
+.st-cream{background:linear-gradient(160deg,#FFFFFF,#E9E9E4)}
+.st-metal{background:linear-gradient(145deg,#8C9096 0%,#F3F5F7 24%,#9EA3AA 46%,#E7EAED 70%,#878C92 100%)}
+.st-metalLight{background:linear-gradient(145deg,#EEF1F4 0%,#FBFCFD 22%,#D4DAE0 46%,#EEF1F3 70%,#A6ADB6 100%)}
+.st-glassDark{background:linear-gradient(160deg,rgba(60,66,72,.72),rgba(18,20,22,.60));border:1px solid rgba(255,255,255,.16)}
+.st-glassLight{background:linear-gradient(160deg,rgba(255,255,255,.62),rgba(238,241,245,.44));border:1px solid rgba(255,255,255,.6)}
+.skin-name{font-size:11px;color:var(--text-2);white-space:nowrap}
+.skin-card.on .skin-name{color:#fff;font-weight:600}
 .ap-slider-row .el-slider{flex:1;min-width:0} /* v0.1.6.30：滑块吃掉剩余宽度 */
 .ap-value{font-size:12px;color:var(--text-2);width:42px;text-align:right;flex:none}
 
@@ -937,24 +955,22 @@ html[data-theme="light"] .rm-edit-card{background:rgba(124,111,240,.06)}
             <template v-if="active === 'appearance'">
               <div class="section-title">小组件样式</div>
 
+              <!-- v1.0.6：皮肤预设——原「色系 + 材质」两排收成一排五档。
+                   皮肤是 theme/texture 的一维视图，选中后由后端落回这两个键，渲染层无需改动。
+                   质感（清亮/磨砂）作为毛玻璃皮肤下的二级选项保留，Win11 仍隐藏。 -->
               <div class="set-card">
-                <div class="set-label">色系</div>
-                <div class="seg-group">
-                  <button type="button" class="seg-btn" :class="{ on: apTheme === 'light' }" @click="onThemeChange('light')">浅色</button>
-                  <button type="button" class="seg-btn" :class="{ on: apTheme === 'dark' }" @click="onThemeChange('dark')">深色</button>
-                </div>
-              </div>
-
-              <div class="set-card">
-                <div class="set-label">材质</div>
-                <div class="seg-group">
-                  <button type="button" class="seg-btn" :class="{ on: apTexture === 'plain' }" @click="onTextureChange('plain')">纯色</button>
-                  <button type="button" class="seg-btn" :class="{ on: apTexture === 'glass' }" @click="onTextureChange('glass')">毛玻璃</button>
-                  <button type="button" class="seg-btn" :class="{ on: apTexture === 'metal' }" @click="onTextureChange('metal')">金属</button>
+                <div class="set-label">皮肤</div>
+                <div class="skin-grid">
+                  <button v-for="s in SKINS" :key="s.id" type="button"
+                          class="skin-card" :class="{ on: apSkin === s.id }"
+                          @click="onSkinChange(s.id)">
+                    <span class="skin-thumb" :class="'st-' + s.id"></span>
+                    <span class="skin-name">{{ s.name }}</span>
+                  </button>
                 </div>
 
-                <!-- 纯色参数：与材质同卡片 -->
-                <div v-if="apTexture === 'plain'" class="ap-sub">
+                <!-- 纯色系参数：透明度 -->
+                <div v-if="apSkin === 'ink' || apSkin === 'cream'" class="ap-sub">
                   <div class="ap-head">
                     <span class="set-label">透明度</span>
                     <span class="ap-value">{{ apPlainOpacity }}%</span>
@@ -964,8 +980,8 @@ html[data-theme="light"] .rm-edit-card{background:rgba(124,111,240,.06)}
                   </div>
                 </div>
 
-                <!-- v1.0.4：Win11 只保留一档毛玻璃（清亮观感），「质感」选项在 Win11 上隐藏 -->
-                <template v-if="apTexture === 'glass'">
+                <!-- 毛玻璃参数（v1.0.4：Win11 只保留一档毛玻璃，「质感」在 Win11 上隐藏） -->
+                <template v-if="apSkin === 'glassDark' || apSkin === 'glassLight'">
                   <div class="ap-sub" v-if="!apIsWin11">
                     <div class="set-label">质感</div>
                     <div class="seg-group">
@@ -973,18 +989,33 @@ html[data-theme="light"] .rm-edit-card{background:rgba(124,111,240,.06)}
                       <button type="button" class="seg-btn" :class="{ on: apGlassFinish === 'frosted' }" @click="onGlassFinishChange('frosted')">磨砂</button>
                     </div>
                   </div>
+                  <!-- v1.0.5：浓度改为「可读性预算」——默认按壁纸明暗自动求解染色量，滑块退化为偏移微调；
+                       关掉自动即完全回到旧的绝对值滑块（一键回退） -->
                   <div class="ap-sub">
-                    <div class="ap-head">
-                      <span class="set-label">浓度</span>
-                      <span class="ap-value">{{ apGlassTint }}%</span>
+                    <div class="ap-head ap-head-auto">
+                      <span class="set-label">按背景自动调节</span>
+                      <el-switch :model-value="apGlassTintAuto" @change="onGlassTintAutoChange" />
                     </div>
-                    <div class="ap-slider-row">
-                      <el-slider v-model="apGlassTint" :min="0" :max="100" @change="onGlassTintChange" />
-                    </div>
+                    <template v-if="apGlassTintAuto">
+                      <div class="ap-head">
+                        <span class="set-label">微调</span>
+                        <span class="ap-value">{{ apGlassTintShift > 0 ? '+' : '' }}{{ apGlassTintShift }}</span>
+                      </div>
+                      <div class="ap-slider-row">
+                        <el-slider v-model="apGlassTintShift" :min="-30" :max="30" @change="onGlassTintShiftChange" />
+                      </div>
+                    </template>
+                    <template v-else>
+                      <div class="ap-head">
+                        <span class="set-label">浓度</span>
+                        <span class="ap-value">{{ apGlassTint }}%</span>
+                      </div>
+                      <div class="ap-slider-row">
+                        <el-slider v-model="apGlassTint" :min="0" :max="100" @change="onGlassTintChange" />
+                      </div>
+                    </template>
                   </div>
                 </template>
-
-
 
                 <!-- 金属：无参数，不加任何控件 -->
               </div>
@@ -2242,9 +2273,28 @@ createApp({
     const apGlassFinish = ref('clear');           // 毛玻璃质感 clear（默认，AccentState=3）/ frosted（AccentState=4）
     const apIsWin11 = ref(false);                 // v1.0.4：Win11 只保留一档毛玻璃，质感选项在此平台隐藏
     const apGlassTint = ref(20);                  // 毛玻璃浓度 0~100（100 ≈ 测试程序 80）
+    // v1.0.5：浓度改为「可读性预算」——自动=按背景亮度反解染色量，滑块退化为 ±30 偏移微调
+    const apGlassTintAuto = ref(true);
+    const apGlassTintShift = ref(0);
     const apLocked = ref(false);
     const apTheme = ref('dark'); // v0.1.6.8：小组件主题 深色/浅色，三材质共用
     const apTexture = ref('plain'); // v0.1.6.26：小组件质感 纯色/毛玻璃；v0.1.6.27 增加金属
+    /* v1.0.6：皮肤预设——五档一维视图。apTheme/apTexture 仍保留（渲染与旧逻辑用），由 skin 反推，两者不各自为政 */
+    const apSkin = ref('ink');
+    const SKINS = [
+      { id: 'ink', name: '墨黑' },
+      { id: 'cream', name: '奶油' },
+      { id: 'metal', name: '金属·深' },
+      { id: 'metalLight', name: '金属·浅' },
+      { id: 'glassDark', name: '毛玻璃·深' },
+      { id: 'glassLight', name: '毛玻璃·浅' }
+    ];
+    /* 与 AppConfig.DeriveSkin 同口径：两边不一致会让卡片选中态和真实配置错位 */
+    function deriveSkin(texture, theme) {
+      if (texture === 'glass') return theme === 'light' ? 'glassLight' : 'glassDark';
+      if (texture === 'metal') return theme === 'light' ? 'metalLight' : 'metal';
+      return theme === 'light' ? 'cream' : 'ink';
+    }
 
     function loadAppearance() {
       store.getWidgetAppearance().then(function (a) {
@@ -2256,9 +2306,12 @@ createApp({
         apIsWin11.value = !!a.isWin11;   // v1.0.4：Win11 隐藏「质感」选项
         var tint = a.glassTint;
         apGlassTint.value = tint != null ? tint : 20;
+        apGlassTintAuto.value = a.glassTintAuto !== false;   // v1.0.5：缺省视为开启
+        apGlassTintShift.value = a.glassTintShift != null ? a.glassTintShift : 0;
         apLocked.value = !!a.locked;
         apTheme.value = a.theme === 'light' ? 'light' : 'dark';
         apTexture.value = (a.texture === 'glass' || a.texture === 'metal') ? a.texture : 'plain';
+        apSkin.value = deriveSkin(apTexture.value, apTheme.value);   // v1.0.6：皮肤卡选中态由 texture/theme 推导
       });
     }
 
@@ -2277,6 +2330,18 @@ createApp({
       store.setWidgetAppearance({ glassTint: v });
     }
 
+    // v1.0.5：自动浓度开关 / 偏移微调
+    function onGlassTintAutoChange(v) {
+      apGlassTintAuto.value = v;
+      store.setWidgetAppearance({ glassTintAuto: v }).then(function (r) {
+        if (!r.ok) loadAppearance();
+      });
+    }
+
+    function onGlassTintShiftChange(v) {
+      store.setWidgetAppearance({ glassTintShift: v });
+    }
+
     function onThemeChange(v) {
       apTheme.value = v; // v0.1.6.9：先即时更新选中态，后端失败再回读
       store.setWidgetAppearance({ theme: v }).then(function (r) {
@@ -2290,6 +2355,26 @@ createApp({
         /* v0.1.6.30：每材质各有记忆，切回来后参数卡片按该材质重新展开 */
         loadAppearance();
         if (!r.ok) ElementPlus.ElMessage.error(r.msg || '切换材质失败');
+      });
+    }
+
+    /* v1.0.6：皮肤切换。后端按皮肤名落回 theme/texture，这里先本地预演一遍，
+       让参数区（透明度 / 质感 / 浓度）立刻跟着切换，不等一次 IPC 往返 */
+    function onSkinChange(v) {
+      if (apSkin.value === v) return;
+      apSkin.value = v;
+      var map = {
+        ink: { texture: 'plain', theme: 'dark' },
+        cream: { texture: 'plain', theme: 'light' },
+        metal: { texture: 'metal', theme: 'dark' },
+        metalLight: { texture: 'metal', theme: 'light' },
+        glassDark: { texture: 'glass', theme: 'dark' },
+        glassLight: { texture: 'glass', theme: 'light' }
+      }[v];
+      if (map) { apTexture.value = map.texture; apTheme.value = map.theme; }
+      store.setWidgetAppearance({ skin: v }).then(function (r) {
+        loadAppearance();
+        if (!r.ok) ElementPlus.ElMessage.error(r.msg || '切换皮肤失败');
       });
     }
 
@@ -3377,7 +3462,7 @@ var extraCardOpen = ref(false);
       asHourNum, asMinNum, asMonthDayNum, asAdvanceNum, onNumWheel, onNumBlur,
       asStatusText, asActive, asMsg, asErr,
       onAsEnabledChange, doAsStart, doCancel,
-      apPlainOpacity, apGlassFinish, apGlassTint, apLocked, apTheme, apTexture, apIsWin11,
+      apPlainOpacity, apGlassFinish, apGlassTint, apGlassTintAuto, apGlassTintShift, apLocked, apTheme, apTexture, apIsWin11, apSkin, SKINS,
       iconOf, syncStateText,
       onToggle, onClockMode, doSyncNow, openLink,
       extra, onExtraToggle, onExtraColor, onExtraStyle, extraOpen, toggleExtraOpen,
@@ -3389,7 +3474,7 @@ var extraCardOpen = ref(false);
       openAcc, toggleAcc, noticeText, recYear, recYears, recYearHint, doRecognize, candShow, candWarnings, candidates,
       candDateText, editCand, removeCand, saveCand, setCandKind, cancelCand, confirmCand, flashId,
       reloadManual, doAddManual, goHolidaySub, batchName, toggleYear, doRemoveManual, doClearYear, doClearAllManual,
-      loadAutoShutdown, loadAppearance, onPlainOpacityChange, onGlassFinishChange, onGlassTintChange, onLockedChange, onThemeChange, onTextureChange, onNav,
+      loadAutoShutdown, loadAppearance, onPlainOpacityChange, onGlassFinishChange, onGlassTintChange, onGlassTintAutoChange, onGlassTintShiftChange, onLockedChange, onThemeChange, onTextureChange, onSkinChange, onNav,
       rmMode, rmRepeat, rmWeekdays, rmMonthDayNum, rmCountdownHour, rmCountdownMin, rmText, rmSound, rmHourNum, rmMinNum, rmDate,
       RM_QUICK_MIN, RM_QUICK_HOUR, rmPickMin, rmPickHour, edPickMin, edPickHour, rmPickQ, edPickQ, rmDropPick, edDropPick,
       rmList, rmStatusText, rmGroups, rmGroupOpen, toggleRmGroup, onRmNumWheel, onRmNumBlur, onRmSoundChange,

@@ -47,10 +47,10 @@ window.addEventListener('unhandledrejection', function (e) {
   /* v0.1.6.26 毛毛玻璃形态：色系 × 质感(纯色/毛毛玻璃) × 透明度；纯色回退早期边框线，毛毛玻璃加模糊/增色/亮边/折射 */
   --plain-border:rgba(255,255,255,0.08);
   --glass-blur:16px; --glass-saturate:1.6;
-  /* v1.0.3 面板圆角：必须与窗口圆角同一半径，否则会看到两条弧错位（Win11 由后端下发 8px 对齐 DWM 系统圆角） */
-  --panel-radius:14px;
-  --edge-line:rgba(255,255,255,0.14);
-  --rim-lt:rgba(255,255,255,0.32); --rim-rb:rgba(255,255,255,0.04);
+  /* 小组件外角统一为直角：--panel-radius 恒为 0（后端 PanelRadius 下发 0） */
+  --panel-radius:0px;
+  --edge-line:rgba(255,255,255,0.10);
+  --rim-lt:rgba(255,255,255,0.24); --rim-rb:rgba(255,255,255,0.04);
   --div:rgba(255,255,255,0.16); /* v0.1.6.28 上下分区线 */
   /* 五类日期配色（深底，M0-7 初值，验收后微调） */
   --c-workday:#FFFFFF;
@@ -73,14 +73,27 @@ body{font-family:'Microsoft YaHei UI','Microsoft YaHei','微软雅黑','PingFang
 
 #app{height:100%;display:flex;flex-direction:column;align-items:center;justify-content:center;background:transparent;overflow:hidden;position:relative}
 /* v0.1.6.9：窗口透明后由前端统一控制面板背景（主题色 + 透明度实时，圆角 14 匹配窗口），内容在其上不透明 */
-.panel-bg{position:absolute;inset:0;background:rgba(var(--panel-rgb), var(--panel-alpha, 1));border-radius:var(--panel-radius, 14px);pointer-events:none;z-index:0;
+.panel-bg{position:absolute;inset:0;background:rgba(var(--panel-rgb), var(--panel-alpha, 1));border-radius:var(--panel-radius, 0px);pointer-events:none;z-index:0;
   border:1px solid var(--plain-border)} /* v0.1.6.26 纯色卡回退早期边框线 */
-/* v0.1.6.26 毛玻璃形态：模糊+增色+叠白+亮边+折射（rim 左上亮右下暗） */
+/* v0.1.6.26 毛玻璃形态：亮边 + 顶部受光 + 柔投影
+   v1.0.5 删除 backdrop-filter：它的 backdrop 只覆盖同一合成上下文的下层兄弟节点，
+   透明窗口背后是桌面、不在 WebView2 合成树内，写 blur/saturate 既不模糊也不增色（死代码）。
+   真正的模糊与染色由 WPF 侧 SetWindowCompositionAttribute 下发，勿再加回。
+   亮边改 1px 只留顶面受光（四边等宽亮边像描边，不像玻璃）；外投影改 4 层叠加近似高斯。 */
 .panel-bg.glass{
-  -webkit-backdrop-filter:blur(var(--glass-blur)) saturate(var(--glass-saturate));
-  backdrop-filter:blur(var(--glass-blur)) saturate(var(--glass-saturate));
-  border:1px solid var(--edge-line);
-  box-shadow:inset 1.5px 1.5px 0 var(--rim-lt), inset -1.5px -1.5px 0 var(--rim-rb);
+  border:1px solid rgba(255,255,255,0.06);
+  box-shadow:
+    inset 0 -1px 0 var(--rim-rb),
+    0 1.5px 1.5px rgba(0,0,0,0.09),
+    0 3.5px 3.5px rgba(0,0,0,0.07),
+    0 6.5px 6.5px rgba(0,0,0,0.05),
+    0 10px 10px rgba(0,0,0,0.035);
+}
+/* 顶部受光带：玻璃"厚度感"的主要来源，纯 CSS 真实生效（作用在自身图层，不依赖 backdrop） */
+.panel-bg.glass::before{
+  content:"";position:absolute;inset:0;border-radius:var(--panel-radius, 0px);
+  pointer-events:none;
+  background:linear-gradient(180deg, rgba(255,255,255,0.10) 0%, rgba(255,255,255,0.045) 22%, rgba(255,255,255,0) 38%);
 }
 /* v0.1.6.27 金属（不锈钢）质感：极细发丝（0.5px 亮/0.5px 暗、2px 周期、极低对比）+ 斜向柔光 + 窄亮边/窄暗边；
    固定不透明（不参与透明度滑块）。深色=暗钢（此处为 :root 默认深色），浅色=亮银见 html[data-theme="light"] 覆盖 */
@@ -89,11 +102,11 @@ body{font-family:'Microsoft YaHei UI','Microsoft YaHei','微软雅黑','PingFang
     repeating-linear-gradient(90deg, rgba(255,255,255,0.042) 0 0.5px, rgba(0,0,0,0.020) 0.5px 1px, transparent 1px 2px),
     linear-gradient(180deg, rgba(255,255,255,0.14) 0%, rgba(255,255,255,0.035) 30%, rgba(255,255,255,0) 58%, rgba(0,0,0,0.24) 84%, rgba(0,0,0,0.38) 100%),
     linear-gradient(104deg, #4a4f56 0%, #61666d 17%, #34383d 43%, #474c53 61%, #282c30 84%, #1e2226 100%);
-  border:1px solid rgba(255,255,255,0.22);
-  box-shadow:inset 0 1px 0 rgba(255,255,255,0.40), inset 0 -1px 0 rgba(0,0,0,0.50), 0 12px 28px var(--shadow);
+  border:1px solid rgba(255,255,255,0.08);
+  box-shadow:inset 0 -1px 0 rgba(0,0,0,0.50), 0 12px 28px var(--shadow);
   overflow:hidden;
 }
-.panel-bg.metal::before{content:"";position:absolute;inset:0;border-radius:calc(var(--panel-radius, 14px) - 1px);pointer-events:none;
+.panel-bg.metal::before{content:"";position:absolute;inset:0;border-radius:var(--panel-radius, 0px);pointer-events:none;
   background:linear-gradient(108deg, rgba(255,255,255,0.10) 0%, rgba(255,255,255,0.03) 32%, rgba(255,255,255,0) 56%, rgba(0,0,0,0.30) 100%)}
 .panel-bg.metal::after{content:"";position:absolute;left:-25%;right:-25%;top:10%;height:30%;pointer-events:none;
   background:linear-gradient(100deg, transparent 0%, rgba(255,255,255,0.10) 36%, rgba(255,255,255,0.26) 52%, rgba(255,255,255,0.09) 68%, transparent 100%);
@@ -106,9 +119,9 @@ body{font-family:'Microsoft YaHei UI','Microsoft YaHei','微软雅黑','PingFang
   background:var(--drag-solid);
   border-color:var(--drag-solid);
   box-shadow:none;
-  -webkit-backdrop-filter:none;
-  backdrop-filter:none;
 }
+/* 拖动降级为实心底，顶部受光带一并撤掉，避免实心卡上出现一条白色渐变 */
+.panel-bg.glass.dragging::before{display:none}
 /* v1.0.3 去掉磨砂颗粒层：用户明确只要 Win10 那种清亮/磨砂的观感，不要颗粒质感。
    Win11 的 Acrylic 模糊半径不可调，两档的差别改由后端染色浓度区分——清亮档染色更淡更透，
    磨砂档染色更沉（见 CSharpBridge / CalendarPopupWindow.ApplyAcrylic 里的系数）。
@@ -542,6 +555,10 @@ html[data-theme="light"]{
 /* v0.1.6.22：浅色主题今日日期+农历黑色加粗（方框仍紫、淡紫底不变；与深色白字对应，用户实测定稿深浅文字颜色区分） */
 html[data-theme="light"] .cell.today .circle,
 html[data-theme="light"] .cell.today .sub{color:#000;font-weight:700}
+/* v1.0.5 浅色玻璃的顶部受光：白玻璃整体更亮，受光带略强，仍只覆盖顶部 38% */
+html[data-theme="light"] .panel-bg.glass::before{
+  background:linear-gradient(180deg, rgba(255,255,255,0.34) 0%, rgba(255,255,255,0.12) 22%, rgba(255,255,255,0) 38%);
+}
 /* v0.1.6.27 金属亮银（浅色系）：更亮银灰底 + 更强顶光，文字沿用浅色主题深字（可读性已预览验收） */
 html[data-theme="light"] .panel-bg.metal{
   background:
@@ -854,10 +871,9 @@ createApp({
     function applyGlassFinish(f) {
       glassFinish.value = (f === 'frosted') ? 'frosted' : 'clear';
     }
-    /* v1.0.3：应用面板圆角半径——必须与窗口圆角一致（Win11 = DWM 系统圆角 8px，Win10 = SetWindowRgn 14px），
-       否则面板弧与窗口边框弧半径不同，视觉上就是"圆角比边框大、探出边框"的双弧错位 */
+    /* 应用面板外角半径；小组件外角统一为直角，后端下发 0，此处允许 0、回退 0 */
     function applyPanelRadius(r) {
-      const v = (typeof r === 'number' && isFinite(r) && r > 0) ? r : 14;
+      const v = (typeof r === 'number' && isFinite(r) && r >= 0) ? r : 0;
       document.documentElement.style.setProperty('--panel-radius', v + 'px');
     }
 

@@ -65,7 +65,7 @@ namespace PiggyCalendar.WebShell
             };
             SizeChanged += (s, e) => _resizeSaveTimer.Stop();
             SizeChanged += (s, e) => _resizeSaveTimer.Start();
-            SizeChanged += (s, e) => ApplyRoundRegion();   // v0.1.6.29 缩放后同步圆角 Region
+            SizeChanged += (s, e) => ApplyRoundRegion();   // 缩放后同步 region 诊断（直角模式，不再挂圆角）
             Closing += (s, e) => SaveLayout();
 
             // M0-8a 手动拖动定时器：约 16ms 轮询一次，跟随光标位移；左键松开即结束并落盘。
@@ -108,6 +108,22 @@ namespace PiggyCalendar.WebShell
                 string wv2Dir = AppConfig.WebView2CacheDir;
                 CoreWebView2Environment wv2Env = await CoreWebView2Environment.CreateAsync(null, wv2Dir);
                 await webView.EnsureCoreWebView2Async(wv2Env);
+
+                // v1.0.7：WebView2 的子进程（浏览器/渲染器/GPU/工具进程）崩溃在 WPF 侧是静默的——
+                // 窗口只会变白或卡住，不抛异常、不留日志。挂上 ProcessFailed 才有唯一线索。
+                try
+                {
+                    webView.CoreWebView2.ProcessFailed += (pfSender, pfArgs) =>
+                    {
+                        try
+                        {
+                            AppLog.Write("[WEBVIEW2] 子进程失败 kind=" + pfArgs.ProcessFailedKind
+                                + " 进程=" + (pfArgs.ProcessDescription ?? "?"));
+                        }
+                        catch { }
+                    };
+                }
+                catch (Exception ex) { AppLog.Write("[WEBVIEW2] 挂 ProcessFailed 失败：" + ex.Message); }
 
                 try { webView.DefaultBackgroundColor = System.Drawing.Color.Transparent; } catch { }
 
@@ -154,7 +170,7 @@ namespace PiggyCalendar.WebShell
                 _initialized = true;
                 InitAcrylic();        // v0.1.6.30 先建 Acrylic 通道（合成背景透明 + 扩展 DWM 客户区）
                 ApplyAppearance();
-                ApplyRoundRegion();   // v0.1.6.29 首次显示即裁剪圆角，避免圆角外露出窗口底色方块
+                ApplyRoundRegion();   // 首次显示即记录 region 诊断（直角模式）
                 AppLog.Write("[WIDGET] WebView2 初始化完成，WebRoot=" + _webRoot);
             }
             catch (Exception ex)
@@ -599,13 +615,19 @@ namespace PiggyCalendar.WebShell
         }
 
         // ---------- 窗口圆角区域（v0.1.6.29） ----------
-        // WebView2 由独立的子 HWND 绘制，WPF 的 Border CornerRadius 裁不到它，
-        // 于是面板圆角之外（窗口矩形四角）会露出窗口底色的浅色方块——金属材质对比强，最容易被看到。
-        // 这里用 SetWindowRgn 把窗口本体裁成圆角，四角不再有任何像素，透出的就只剩桌面。
+        // WebView2 由独立的子 HWND 绘制，WPF 的 Border CornerRadius 裁不到它。
+        // 历史上曾用 SetWindowRgn 把窗口本体裁成圆角；实测该 API 在 Win10/Win11 的 DWM 合成窗口上均挂不住
+        // （见经验 12.54 Win10 补测）。现小组件外角统一为直角，不再创建/挂载 region；下列 P/Invoke 仅留作诊断复查。
         [DllImport("gdi32.dll")]
         private static extern IntPtr CreateRoundRectRgn(int x1, int y1, int x2, int y2, int w, int h);
         [DllImport("user32.dll")]
         private static extern int SetWindowRgn(IntPtr hWnd, IntPtr hRgn, bool bRedraw);
+        [DllImport("user32.dll")]
+        private static extern IntPtr GetWindowRgn(IntPtr hWnd);
+        [DllImport("user32.dll")]
+        private static extern int GetWindowRgnBox(IntPtr hWnd, out RgnRect rect);
+        [StructLayout(LayoutKind.Sequential)]
+        private struct RgnRect { public int Left, Top, Right, Bottom; }
 
         /// <summary>
         /// 按窗口实际像素尺寸重设圆角 Region。
@@ -614,19 +636,23 @@ namespace PiggyCalendar.WebShell
         /// </summary>
         public void ApplyRoundRegion()
         {
+            // 小组件外角统一为直角：不再创建/挂载圆角 region。
+            // （历史：SetWindowRgn 在 Win10/Win11 的 DWM 合成窗口上均挂不住，进程内实测见经验 12.54 Win10 补测。
+            // 下述诊断 P/Invoke 与日志保留，便于后续复查窗口当前 region 归属；不再调 CreateRoundRectRgn/SetWindowRgn。）
             try
             {
                 IntPtr hwnd = new WindowInteropHelper(this).Handle;
-                if (hwnd == IntPtr.Zero) return;
-                double dpi = 1.0;
-                var src = PresentationSource.FromVisual(this);
-                if (src != null && src.CompositionTarget != null) dpi = src.CompositionTarget.TransformToDevice.M11;
-                int w = (int)Math.Round(ActualWidth * dpi);
-                int h = (int)Math.Round(ActualHeight * dpi);
-                if (w <= 0 || h <= 0) return;
-                int r = (int)Math.Round(14.0 * dpi);
-                IntPtr rgn = CreateRoundRectRgn(0, 0, w + 1, h + 1, r * 2, r * 2);
-                SetWindowRgn(hwnd, rgn, true);
+                if (hwnd == IntPtr.Zero)
+                {
+                    AppLog.Write("[WIDGET] RoundRegion 跳过: hwnd=0");
+                    return;
+                }
+                IntPtr cur = GetWindowRgn(hwnd);
+                RgnRect rb;
+                int rgnType = GetWindowRgnBox(hwnd, out rb);
+                AppLog.Write("[WIDGET] RoundRegion 直角模式 hwnd=" + hwnd.ToString("X")
+                    + " afterRgn=" + cur + " regionType=" + rgnType
+                    + " box=(" + rb.Left + "," + rb.Top + "," + rb.Right + "," + rb.Bottom + ")");
             }
             catch (Exception ex)
             {
@@ -653,6 +679,7 @@ namespace PiggyCalendar.WebShell
 
         private const int DWMWA_WINDOW_CORNER_PREFERENCE = 33;
         private const int DWMWCP_ROUND = 2;
+        private const int DWMWCP_SQUARE = 1;   // 强制直角（小组件外角统一为直角）
 
         private struct AccentPolicy
         {
@@ -679,6 +706,137 @@ namespace PiggyCalendar.WebShell
 
         private bool _acrylicReady;
         private bool _dragBlank;
+
+        // ---------- v1.0.5 背景亮度采样：只取点，不抓整屏、不算模糊 ----------
+        // 目的只有一个：知道窗口背后大概多亮，好反解「让字刚好可读的最小染色量」。
+        // 岛仔（xiaotang-daozai）的 backdrop.rs 是同一思路：GetPixel 取窗口外几个点，1.5 秒一次。
+        // 这不等于"抓桌面自己算模糊"——模糊仍然完全交给 DWM，这里只决定染多深。
+        [DllImport("user32.dll")]
+        private static extern IntPtr GetDC(IntPtr hwnd);
+        [DllImport("user32.dll")]
+        private static extern int ReleaseDC(IntPtr hwnd, IntPtr hdc);
+        [DllImport("gdi32.dll")]
+        private static extern uint GetPixel(IntPtr hdc, int x, int y);
+        [DllImport("user32.dll")]
+        private static extern bool GetWindowRect(IntPtr hwnd, out BgRect rect);
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct BgRect { public int Left, Top, Right, Bottom; }
+
+        private double _bgLum = double.NaN;   // 窗口背后亮度 0~1（NaN = 尚未采到）
+        private int _lastAccentAlpha = -1;    // 上次下发的染色 alpha，用于抑制重复日志
+        private DispatcherTimer _bgTimer;
+
+        /// <summary>启动/复用背景亮度采样（1.5 秒一次，只在毛玻璃且开启自动浓度时运行）。</summary>
+        private void EnsureBgSampler()
+        {
+            if (_bgTimer != null)
+            {
+                if (!_bgTimer.IsEnabled) _bgTimer.Start();
+                return;
+            }
+            _bgTimer = new DispatcherTimer(DispatcherPriority.Background) { Interval = TimeSpan.FromMilliseconds(1500) };
+            _bgTimer.Tick += (s, e) => SampleBackdrop();
+            _bgTimer.Start();
+            SampleBackdrop();   // 立即先采一次，避免首帧沿用旧值
+        }
+
+        /// <summary>停止采样（切回纯色/金属，或关闭自动浓度时）。</summary>
+        private void StopBgSampler()
+        {
+            if (_bgTimer != null && _bgTimer.IsEnabled) _bgTimer.Stop();
+        }
+
+        /// <summary>取窗口外缘 10 个点的屏幕颜色，估一个"偏向亮处"的背景亮度。</summary>
+        private void SampleBackdrop()
+        {
+            try
+            {
+                IntPtr hwnd = new WindowInteropHelper(this).Handle;
+                if (hwnd == IntPtr.Zero) return;
+                BgRect r;
+                if (!GetWindowRect(hwnd, out r)) return;
+                int w = r.Right - r.Left, h = r.Bottom - r.Top;
+                if (w <= 0 || h <= 0) return;
+
+                int pad = 8;
+                var xs = new int[12];
+                var ys = new int[12];
+                int n = 0;
+                for (int i = 1; i <= 3; i++)
+                {
+                    int y = r.Top + h * i / 4;
+                    xs[n] = r.Left - pad;  ys[n] = y; n++;
+                    xs[n] = r.Right + pad; ys[n] = y; n++;
+                }
+                xs[n] = r.Left + w / 4;     ys[n] = r.Top - pad;    n++;
+                xs[n] = r.Left + w * 3 / 4; ys[n] = r.Top - pad;    n++;
+                xs[n] = r.Left + w / 4;     ys[n] = r.Bottom + pad; n++;
+                xs[n] = r.Left + w * 3 / 4; ys[n] = r.Bottom + pad; n++;
+
+                IntPtr dc = GetDC(IntPtr.Zero);
+                if (dc == IntPtr.Zero) return;
+                double sum = 0, max = 0; int cnt = 0;
+                try
+                {
+                    for (int i = 0; i < n; i++)
+                    {
+                        uint c = GetPixel(dc, xs[i], ys[i]);
+                        if (c == 0xFFFFFFFF) continue;   // CLR_INVALID：点在屏幕外
+                        int rr = (int)(c & 0xFF), gg = (int)((c >> 8) & 0xFF), bb = (int)((c >> 16) & 0xFF);
+                        double lum = (0.299 * rr + 0.587 * gg + 0.114 * bb) / 255.0;
+                        sum += lum; if (lum > max) max = lum; cnt++;
+                    }
+                }
+                finally { ReleaseDC(IntPtr.Zero, dc); }
+
+                if (cnt == 0) return;
+                // 偏向亮处：白字最怕的是亮背景，只看平均值会偏乐观
+                double next = 0.55 * max + 0.45 * (sum / cnt);
+                double old = _bgLum;
+                _bgLum = next;
+                // 只在亮度有明显变化时重设 accent，避免每 1.5 秒刷一次 DWM 参数与日志
+                if (double.IsNaN(old) || Math.Abs(old - next) > 0.04) ApplyAcrylic();
+            }
+            catch (Exception ex) { AppLog.Write("[WIDGET] 背景采样异常：" + ex.Message); }
+        }
+
+        /// <summary>
+        /// v1.0.5 可读性预算：反解"让合成底刚好达到目标亮度"所需的染色量。
+        /// 合成 out = lum*(1-a) + base*a，令 out = target 得 a = (target-lum)/(base-lum)。
+        /// 深色：目标 0.18（白字对比约 4.5:1），染色基色 #1F2329 亮度约 0.135；
+        /// 浅色：目标 0.86（深字对比约 4.5:1），染色基色 #F2F4F7 亮度约 0.955。
+        /// </summary>
+        private static double SolveAutoAlpha(double lum, bool light, bool win11)
+        {
+            double target, baseLum, floor, ceil;
+            if (win11)
+            {
+                // v1.0.7 Win11：Acrylic 的染色层比 Win10 的 BlurBehind 厚重得多，同一个 alpha
+                // 在 Win11 上明显更"实"。用户实测：深色尚可但还想更透，浅色（暗壁纸下会解到 0.62）
+                // 几乎不透光。故 Win11 单独放宽两头：
+                //   深色：底线 0.08 → 0.04（约 10/255，Acrylic 仍能出模糊的最低量级）
+                //   浅色：目标 0.82 → 0.62、上限 0.62 → 0.38（暗壁纸下落在 0.38 附近，能透出壁纸色）
+                // 亮壁纸场景仍走原公式，不会因为放宽而反过来压暗。
+                target = light ? 0.62 : 0.26;
+                baseLum = light ? 0.955 : 0.135;
+                floor = 0.04;
+                ceil = light ? 0.38 : 0.55;
+            }
+            else
+            {
+                // v1.0.5 Win10 值原样保留——用户明确要求 Win10 观感不随 Win11 的调整漂移。
+                target = light ? 0.82 : 0.26;
+                baseLum = light ? 0.955 : 0.135;
+                floor = 0.08;
+                ceil = 0.62;
+            }
+            // 背景已经朝需要的方向越过了目标，就说明不需要再染色（否则分母趋零、染色量会反向放大）
+            if (light ? (lum >= target) : (lum <= target)) return floor;
+            double a = (target - lum) / (baseLum - lum);
+            if (double.IsNaN(a) || double.IsInfinity(a)) a = light ? 0.55 : 0.45;
+            return Math.Max(floor, Math.Min(ceil, a));
+        }
 
         /// <summary>初始化系统 Acrylic：合成背景全透明 + 扩展 DWM 客户区，随后按外观配置上 accent。</summary>
         public void InitAcrylic()
@@ -721,6 +879,9 @@ namespace PiggyCalendar.WebShell
                 int state = 0;
                 int color = 0;
                 bool win11 = IsWindows11();
+                // v1.0.5：自动浓度只在"毛玻璃 + 自动"时采样背景；其余情况停表（懒开，省开销）
+                if (AppConfig.WidgetTexture == "glass" && AppConfig.GlassTintAuto) EnsureBgSampler();
+                else StopBgSampler();
                 if (!_dragBlank && AppConfig.WidgetTexture == "glass")
                 {
                     // v1.0.1：Win11（build>=22000）的 DWM 已不再渲染 ACCENT_ENABLE_BLURBEHIND(3)：
@@ -737,9 +898,32 @@ namespace PiggyCalendar.WebShell
                     bool frosted = AppConfig.GlassFinish == "frosted";
                     state = (twoFinish && !frosted) ? 3 : 4;
                     bool light = AppConfig.WidgetTheme == "light";
-                    double k = (twoFinish && frosted) ? 0.9 : 0.4;
-                    int a = (int)Math.Round(Math.Max(0, Math.Min(100, AppConfig.GlassTintPercent)) * k * 2.55);
-                    if (win11 && a < 8) a = 8;
+                    int a;
+                    // v1.0.5：浓度从"绝对值"改为"可读性预算"——默认由背景亮度反解，
+                    // 滑块退化为 ±30 的偏移微调；关掉自动即完全回到旧公式（一键回退）。
+                    if (AppConfig.GlassTintAuto && !double.IsNaN(_bgLum))
+                    {
+                        double alpha = SolveAutoAlpha(_bgLum, light, win11);
+                        alpha += AppConfig.GlassTintShift / 30.0 * 0.12;   // ±30 → ±0.12
+                        // 下限放到 0.02：SolveAutoAlpha 已按平台给过 floor，这里只做兜底，
+                        // 若仍写死 0.08 会把 Win11 新放开的 0.04 门槛又抬回去。
+                        a = (int)Math.Round(Math.Max(0.02, Math.Min(0.85, alpha)) * 255);
+                        // v1.0.7：Win11 的 Acrylic 染色 alpha 低于 8 时系统不画模糊，必须夹到 8。
+                        // 夹紧必须放在记日志之前——原先在之后，日志打 5 而实际下发 8，会误导排查。
+                        if (win11 && a < 8) a = 8;
+                        if (Math.Abs(a - _lastAccentAlpha) > 2)
+                        {
+                            AppLog.Write("[WIDGET] 自动浓度 lum=" + _bgLum.ToString("F3")
+                                + " light=" + light + " alpha=" + a + " (" + (a / 255.0).ToString("F2") + ")");
+                            _lastAccentAlpha = a;
+                        }
+                    }
+                    else
+                    {
+                        double k = (twoFinish && frosted) ? 0.9 : 0.4;
+                        a = (int)Math.Round(Math.Max(0, Math.Min(100, AppConfig.GlassTintPercent)) * k * 2.55);
+                        if (win11 && a < 8) a = 8;
+                    }
                     int r = light ? 0xF2 : 0x1F;   // 与测试程序同基色：深 #1F2329 / 浅 #F2F4F7
                     int g = light ? 0xF4 : 0x23;
                     int b = light ? 0xF7 : 0x29;
@@ -802,16 +986,15 @@ namespace PiggyCalendar.WebShell
         }
 
         /// <summary>
-        /// Win11 专用：让 DWM 把窗口裁成系统圆角（DWMWCP_ROUND，半径约 8px）。
-        /// 这是 Win11 上唯一能真正去掉四角直角块的途径——SetWindowRgn 在该系统上不再生效，
-        /// 而窗口矩形的四角会被 accent / 窗口边框染色，看起来就是"圆角外面伸出直角"。
-        /// 注意必须在每次 SetWindowCompositionAttribute 之前调用，否则圆角会被 accent 重置。
+        /// Win11 专用：设置窗口外角偏好。小组件统一为直角，传 DWMWCP_SQUARE=1 强制 DWM 不裁圆角。
+        /// （历史：曾传 DWMWCP_ROUND=2 走系统圆角 8px；现两端统一直角窗口。）
+        /// 注意必须在每次 SetWindowCompositionAttribute 之前调用，否则属性会被 accent 重置。
         /// </summary>
         private void ApplyWin11RoundCorner(IntPtr hwnd)
         {
             try
             {
-                int pref = DWMWCP_ROUND;
+                int pref = DWMWCP_SQUARE;
                 int hr = DwmSetWindowAttribute(hwnd, DWMWA_WINDOW_CORNER_PREFERENCE, ref pref, sizeof(int));
                 if (hr != 0) AppLog.Write("[WIDGET] dwm corner hr=" + hr);
             }

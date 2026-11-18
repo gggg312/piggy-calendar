@@ -34,12 +34,26 @@ namespace PiggyCalendar.WebShell.Services
         public static int WidgetOpacityPercent = 100;    // 【v0.1.6.30 起降级为纯色镜像】旧的全局透明度，仅保留键名兼容；真实来源见 PlainOpacityPercent
         public static string WidgetTheme = "dark";       // 小组件主题 light/dark（v0.1.6.8 浅色主题；默认深色；三材质共用）
         public static string WidgetTexture = "plain";    // 小组件质感 plain/glass/metal（v0.1.6.26 毛玻璃；v0.1.6.27 金属不锈钢；默认纯色）
+        // v1.0.6：皮肤预设——把「色系 + 材质」两排选择收成一排，避免用户面对多维组合无从下手。
+        // 只是 theme/texture 的一维组合视图（内部仍落到 WidgetTheme / WidgetTexture，渲染层不需要改）：
+        //   ink        墨黑       = plain + dark
+        //   cream      奶油       = plain + light
+        //   metal      金属·深    = metal + dark
+        //   metalLight 金属·浅    = metal + light（v1.0.7 用户要求保留，浅色金属 CSS 一直在，只是之前没给入口）
+        //   glassDark  毛玻璃·深  = glass + dark
+        //   glassLight 毛玻璃·浅  = glass + light
+        // 不单独持久化成真相来源：读取时一律由 theme/texture 推导，避免两份数据打架。
+        public static string WidgetSkin = "ink";
         public static int WidgetOpacityBackup = -1;      // v0.1.6.28 进入金属前的透明度备份（v0.1.6.30 起不再使用，仅保留键名回退兼容）
 
         // ---------- v0.1.6.30 按材质独立记忆的外观参数 ----------
         public static int PlainOpacityPercent = 100;     // 纯色材质透明度 0~100（默认 100，映射 .panel-bg 的 alpha）
         public static string GlassFinish = "clear";      // 毛玻璃质感：clear=清亮（默认，对应 AccentState=3）/ frosted=磨砂（AccentState=4）
         public static int GlassTintPercent = 20;         // 毛玻璃浓度 0~100（UI 值；内部 alpha = round(v * 0.8 * 2.55)，100 → 204）
+        // v1.0.5：浓度改为「可读性预算」——默认按窗口背后的实际亮度自动求解染色量，
+        // 用户只需给一个 ±30 的偏移微调；关掉自动即完全回到旧的绝对值行为（一键回退）。
+        public static bool GlassTintAuto = true;         // true=按背景亮度自动求解染色量
+        public static int GlassTintShift = 0;            // 自动模式下的手动偏移 -30~+30（0=纯自动）
 
         // ---------- v0.1.6.37 「额外显示」：节日与纪念日 / 二十四节气 ----------
         public static bool FestivalEnabled = true;       // 节日与纪念日 是否显示（系统设置「额外显示」卡）
@@ -116,6 +130,40 @@ namespace PiggyCalendar.WebShell.Services
             get { return Path.Combine(RuntimeDir, IniFileName); }
         }
 
+        /// <summary>
+        /// v1.0.6：由 theme/texture 反推皮肤名。这是唯一的推导入口，前端下发的 skin 也走这里校验。
+        /// </summary>
+        public static string DeriveSkin(string texture, string theme)
+        {
+            if (texture == "glass") return theme == "light" ? "glassLight" : "glassDark";
+            if (texture == "metal") return theme == "light" ? "metalLight" : "metal";
+            return theme == "light" ? "cream" : "ink";
+        }
+
+        /// <summary>
+        /// v1.0.6：按皮肤名落回 theme/texture（渲染层只认这两个键，不需要知道"皮肤"这个上层概念）。
+        /// 未知皮肤名一律落到 ink，保证前端不会出现"一张卡都没选中"的空白态。
+        /// </summary>
+        public static void ApplySkin(string skin)
+        {
+            switch (skin)
+            {
+                case "cream":
+                    WidgetTexture = "plain"; WidgetTheme = "light"; WidgetSkin = "cream"; break;
+                case "metal":
+                    WidgetTexture = "metal"; WidgetTheme = "dark"; WidgetSkin = "metal"; break;
+                case "metalLight":
+                    /* v1.0.7 补回浅色金属入口：CSS（html[data-theme="light"] .panel-bg.metal）早已存在，之前只是没暴露 */
+                    WidgetTexture = "metal"; WidgetTheme = "light"; WidgetSkin = "metalLight"; break;
+                case "glassDark":
+                    WidgetTexture = "glass"; WidgetTheme = "dark"; WidgetSkin = "glassDark"; break;
+                case "glassLight":
+                    WidgetTexture = "glass"; WidgetTheme = "light"; WidgetSkin = "glassLight"; break;
+                default:
+                    WidgetTexture = "plain"; WidgetTheme = "dark"; WidgetSkin = "ink"; break;
+            }
+        }
+
         public static string WebView2CacheDir
         {
             get
@@ -190,6 +238,8 @@ namespace PiggyCalendar.WebShell.Services
                 WidgetTexture = (tex == "glass" || tex == "metal") ? tex : "plain"; /* v0.1.6.27 增加金属 */
                 int bak = Ini.GetInt(Section, "widgetOpacityBackup", -1); /* v0.1.6.28 金属前的透明度备份 */
                 WidgetOpacityBackup = (bak >= 0 && bak <= 100) ? bak : -1;
+                /* v1.0.6 皮肤只是 theme/texture 的一维视图，一律由它俩推导（磁盘上的 widgetSkin 不作为真相来源） */
+                WidgetSkin = DeriveSkin(WidgetTexture, WidgetTheme);
 
                 /* v0.1.6.30 按材质独立参数：纯色透明度缺键时用旧全局透明度迁移一次 */
                 int plain = Ini.GetInt(Section, "widgetPlainOpacity", WidgetOpacityPercent);
@@ -198,6 +248,9 @@ namespace PiggyCalendar.WebShell.Services
                 GlassFinish = (fin == "clear") ? "clear" : "frosted";
                 int tint = Ini.GetInt(Section, "widgetGlassTint", 20);
                 GlassTintPercent = Math.Max(0, Math.Min(100, tint));
+                /* v1.0.5 自动染色：缺键时默认开启（老用户升级后即得到新行为） */
+                GlassTintAuto = Ini.GetBool(Section, "widgetGlassTintAuto", true);
+                GlassTintShift = Math.Max(-30, Math.Min(30, Ini.GetInt(Section, "widgetGlassTintShift", 0)));
                 WidgetOpacityPercent = PlainOpacityPercent;   /* 旧字段镜像纯色值，供旧版前端/回退兼容 */
 
                 /* v0.1.6.37「额外显示」两组内容 */
@@ -293,10 +346,13 @@ namespace PiggyCalendar.WebShell.Services
                 Ini.WriteInt(Section, "widgetOpacityPercent", PlainOpacityPercent);   /* 旧键：写纯色值，旧版本回退时行为一致 */
                 Ini.WriteString(Section, "widgetTheme", WidgetTheme);
                 Ini.WriteString(Section, "widgetTexture", WidgetTexture);
+                Ini.WriteString(Section, "widgetSkin", WidgetSkin);                    /* v1.0.6 皮肤名，仅供读取/排查，真相仍是上两行 */
                 Ini.WriteInt(Section, "widgetOpacityBackup", WidgetOpacityBackup); /* v0.1.6.28 */
                 Ini.WriteInt(Section, "widgetPlainOpacity", PlainOpacityPercent);      /* v0.1.6.30 */
                 Ini.WriteString(Section, "widgetGlassFinish", GlassFinish);            /* v0.1.6.30 */
                 Ini.WriteInt(Section, "widgetGlassTint", GlassTintPercent);            /* v0.1.6.30 */
+                Ini.WriteBool(Section, "widgetGlassTintAuto", GlassTintAuto);          /* v1.0.5 */
+                Ini.WriteInt(Section, "widgetGlassTintShift", GlassTintShift);         /* v1.0.5 */
                 Ini.WriteBool(Section, "festivalEnabled", FestivalEnabled);            /* v0.1.6.37 */
                 Ini.WriteString(Section, "festivalColor", FestivalColor);
                 Ini.WriteString(Section, "festivalStyle", FestivalStyle);

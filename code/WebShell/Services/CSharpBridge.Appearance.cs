@@ -31,8 +31,13 @@ namespace PiggyCalendar.WebShell.Services
                 ["plainOpacity"] = AppConfig.PlainOpacityPercent,
                 ["glassFinish"] = AppConfig.GlassFinish,
                 ["glassTint"] = AppConfig.GlassTintPercent,
+                // v1.0.5 浓度改为「可读性预算」：auto=true 时按背景亮度自动求解，滑块变偏移微调
+                ["glassTintAuto"] = AppConfig.GlassTintAuto,
+                ["glassTintShift"] = AppConfig.GlassTintShift,
                 ["theme"] = AppConfig.WidgetTheme,
                 ["texture"] = AppConfig.WidgetTexture,
+                // v1.0.6 皮肤预设：theme+texture 的一维组合视图，前端只显示这一排五档
+                ["skin"] = AppConfig.DeriveSkin(AppConfig.WidgetTexture, AppConfig.WidgetTheme),
                 ["panelRadius"] = PanelRadius(),
                 // v1.0.4：下发给前端，Win11 上隐藏「质感（清亮/磨砂）」选项——Win11 只保留一档毛玻璃
                 ["isWin11"] = HostIsWindows11()
@@ -40,15 +45,13 @@ namespace PiggyCalendar.WebShell.Services
         }
 
         /// <summary>
-        /// v1.0.3：面板圆角半径（前端 --panel-radius）。
-        /// 必须与窗口实际圆角同半径，否则面板弧与窗口边框弧错位——视觉上"圆角比边框大、探出边框"。
-        ///   Win11：DWM 系统圆角固定 8px（DwmSetWindowAttribute 33=ROUND），前端也必须 8px 才能同心；
-        ///   Win10：SetWindowRgn 按 14*dpi 裁圆角，前端保持 14px。
-        /// 平台判断读注册表 CurrentBuildNumber，不用 Environment.OSVersion（未声明 manifest 时会被伪装成 9600）。
+        /// 面板外角半径（前端 --panel-radius）。小组件外角统一为直角，恒返回 0。
+        /// （历史：Win11 曾用 DWM 系统圆角 8px、Win10 曾用 SetWindowRgn 14*dpi；实测 Win10 region 挂不住，
+        /// 两端统一改为直角窗口 + 直角面板，不再按平台区分半径。平台判断 HostIsWindows11 仍供 isWin11 下发使用。）
         /// </summary>
         private static int PanelRadius()
         {
-            return HostIsWindows11() ? 8 : 14;
+            return 0;
         }
 
         private static bool _isWin11Known;
@@ -94,6 +97,15 @@ namespace PiggyCalendar.WebShell.Services
                 if (d.ContainsKey("locked"))
                     AppConfig.WidgetLocked = GetBool(d, "locked", AppConfig.WidgetLocked);
 
+                /* v1.0.6 皮肤：一旦给了 skin，theme/texture 由它推导，同批传入的 theme/texture 键一律忽略，
+                   避免"皮肤说一处、色系说另一处"的错位 */
+                bool skinGiven = d.ContainsKey("skin");
+                if (skinGiven)
+                {
+                    string sk = d["skin"] != null ? d["skin"].ToString() : "";
+                    AppConfig.ApplySkin(sk);
+                }
+
                 // 兼容：旧前端只传 opacityPercent，按纯色透明度处理
                 if (d.ContainsKey("plainOpacity") || d.ContainsKey("opacityPercent"))
                 {
@@ -115,18 +127,31 @@ namespace PiggyCalendar.WebShell.Services
                     AppConfig.GlassTintPercent = Math.Max(0, Math.Min(100, t));
                 }
 
-                if (d.ContainsKey("theme"))
+                // v1.0.5 自动浓度开关与偏移微调
+                if (d.ContainsKey("glassTintAuto"))
+                    AppConfig.GlassTintAuto = GetBool(d, "glassTintAuto", AppConfig.GlassTintAuto);
+                if (d.ContainsKey("glassTintShift"))
+                {
+                    int s = GetInt(d, "glassTintShift", AppConfig.GlassTintShift);
+                    AppConfig.GlassTintShift = Math.Max(-30, Math.Min(30, s));
+                }
+
+                if (!skinGiven && d.ContainsKey("theme"))
                 {
                     string t = d["theme"] != null ? d["theme"].ToString() : AppConfig.WidgetTheme;
                     AppConfig.WidgetTheme = t == "light" ? "light" : "dark";
                 }
 
-                if (d.ContainsKey("texture"))
+                if (!skinGiven && d.ContainsKey("texture"))
                 {
                     string x = d["texture"] != null ? d["texture"].ToString() : AppConfig.WidgetTexture;
                     AppConfig.WidgetTexture = (x == "glass" || x == "metal") ? x : "plain";
                     AppConfig.WidgetOpacityBackup = -1;   /* v0.1.6.30 起不再备份/还原透明度 */
                 }
+
+                /* v1.0.6：theme/texture 任何一条改动后重算皮肤名，保证下发给前端的 skin 与渲染状态同步 */
+                if (!skinGiven)
+                    AppConfig.WidgetSkin = AppConfig.DeriveSkin(AppConfig.WidgetTexture, AppConfig.WidgetTheme);
 
                 AppConfig.Save();
                 PostEvent("{\"kind\":\"config-changed\",\"payload\":{\"widgetLocked\":" + (AppConfig.WidgetLocked ? "true" : "false")
@@ -134,7 +159,9 @@ namespace PiggyCalendar.WebShell.Services
                     + ",\"widgetTheme\":\"" + AppConfig.WidgetTheme + "\""
                     + ",\"widgetTexture\":\"" + AppConfig.WidgetTexture + "\""
                     + ",\"widgetGlassFinish\":\"" + AppConfig.GlassFinish + "\""
-                    + ",\"widgetGlassTint\":" + AppConfig.GlassTintPercent + "}}");
+                    + ",\"widgetGlassTint\":" + AppConfig.GlassTintPercent
+                    + ",\"widgetGlassTintAuto\":" + (AppConfig.GlassTintAuto ? "true" : "false")
+                    + ",\"widgetGlassTintShift\":" + AppConfig.GlassTintShift + "}}");
                 _applyAppearance?.Invoke();
                 return "ok";
             }
