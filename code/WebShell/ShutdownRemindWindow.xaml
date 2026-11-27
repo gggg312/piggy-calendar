@@ -17,12 +17,12 @@
             <RowDefinition Height="Auto" />
         </Grid.RowDefinitions>
 
-        <!-- 标题 -->
-        <TextBlock Grid.Row="0" Text="自动关机提醒" FontSize="17" FontWeight="SemiBold"
+        <!-- 标题（v1.0.1：文本由代码按动作设置为「自动关机提醒 / 自动重启提醒」） -->
+        <TextBlock Grid.Row="0" x:Name="HeadText" Text="自动关机提醒" FontSize="17" FontWeight="SemiBold"
                    Foreground="#FFFFFF" HorizontalAlignment="Center" Margin="0,0,0,6" />
 
-        <!-- 说明 -->
-        <TextBlock Grid.Row="1" Text="距自动关机还有" FontSize="13"
+        <!-- 说明（v1.0.1：文本由代码按动作设置为「距自动关机/重启还有」） -->
+        <TextBlock Grid.Row="1" x:Name="DescText" Text="距自动关机还有" FontSize="13"
                    Foreground="#B6BCC9" HorizontalAlignment="Center" Margin="0,0,0,2" />
 
         <!-- 倒计时 -->

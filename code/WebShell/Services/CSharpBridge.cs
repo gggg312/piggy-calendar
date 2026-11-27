@@ -34,6 +34,7 @@ namespace PiggyCalendar.WebShell.Services
         private Action _beginDrag;
         private Action<string> _beginResize;
         private Action<double> _fitWidgetWidth;   // v0.1.6.33 日历列宽自适应 → 窗口加宽
+        private Action<double> _fitWidgetHeight;  // v1.0.2 每日语录开关 → 窗口改高
 
         public CSharpBridge(Action<string> postEvent)
         {
@@ -46,7 +47,7 @@ namespace PiggyCalendar.WebShell.Services
             Action beginDrag, Action<string> beginResize, Action openAutoShutdown = null,
             Action closeAutoShutdown = null, Action openReminder = null, Action closeReminder = null,
             Action<double> fitWidgetWidth = null, Action<string> openReminderAt = null,
-            Action<string, string> openReminderManage = null)
+            Action<string, string> openReminderManage = null, Action<double> fitWidgetHeight = null)
         {
             _showCalendar = showCalendar;
             _hideCalendar = hideCalendar;
@@ -62,6 +63,7 @@ namespace PiggyCalendar.WebShell.Services
             _beginDrag = beginDrag;
             _beginResize = beginResize;
             _fitWidgetWidth = fitWidgetWidth;
+            _fitWidgetHeight = fitWidgetHeight;   // v1.0.2
         }
 
         /// <summary>关闭自动关机面板窗（启动成功后前端调用）。</summary>
@@ -271,6 +273,20 @@ namespace PiggyCalendar.WebShell.Services
             try
             {
                 _fitWidgetWidth?.Invoke(needWidth);
+                return "ok";
+            }
+            catch (Exception ex)
+            {
+                return "err:" + ex.Message;
+            }
+        }
+
+        /// <summary>v1.0.2：语录开关切换后，前端请求壳层把窗口高度换到 600/560 对应的实际像素。</summary>
+        public string FitWidgetHeight(double needHeight)
+        {
+            try
+            {
+                _fitWidgetHeight?.Invoke(needHeight);
                 return "ok";
             }
             catch (Exception ex)

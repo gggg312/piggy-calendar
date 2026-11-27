@@ -5,12 +5,12 @@ using System.Web.Script.Serialization;
 namespace PiggyCalendar.WebShell.Services
 {
     /// <summary>
-    /// CSharpBridge partial：② 自动关机调度与执行桥（v0.1.6.0 周期版）。
-    /// SetAutoShutdown 入参 {enabled, time:'HH:mm', repeatType:'daily'|'weekly'|'monthly', weekdays:'1,3,5', monthDay:N, advanceMinutes:N}。
+    /// CSharpBridge partial：② 自动关机/重启调度与执行桥（v0.1.6.0 周期版；v1.0.1 动作二选一）。
+    /// SetAutoShutdown 入参 {enabled, time:'HH:mm', repeatType:'daily'|'weekly'|'monthly', weekdays:'1,3,5', monthDay:N, advanceMinutes:N, action:'shutdown'|'restart'}。
     /// </summary>
     public partial class CSharpBridge
     {
-        /// <summary>设置自动关机（周期配置）。返回 "ok" 或 "err:..."。</summary>
+        /// <summary>设置自动关机/重启（周期配置）。返回 "ok" 或 "err:..."。</summary>
         public string SetAutoShutdown(string json)
         {
             try
@@ -26,10 +26,12 @@ namespace PiggyCalendar.WebShell.Services
                 int monthDay = GetInt(d, "monthDay", AppConfig.AutoShutdownMonthDay);
                 int advanceMinutes = GetInt(d, "advanceMinutes", AppConfig.AutoShutdownAdvanceMinutes);
                 advanceMinutes = Math.Max(0, Math.Min(59, advanceMinutes));
+                string action = GetStr(d, "action", AppConfig.AutoShutdownAction); // v1.0.1：shutdown|restart，非法值由服务层回落 shutdown
 
-                string r = AutoShutdownService.Instance.Configure(enabled, time, repeatType, weekdays, monthDay, advanceMinutes);
-                // v0.1.6.1：配置成功 → 广播到小组件刷新自动关机按钮启动状态
-                if (r == "ok") PostEvent("{\"kind\":\"auto-shutdown-changed\",\"payload\":{\"enabled\":" + (enabled ? "true" : "false") + "}}");
+                string r = AutoShutdownService.Instance.Configure(enabled, time, repeatType, weekdays, monthDay, advanceMinutes, action);
+                // v0.1.6.1：配置成功 → 广播到小组件刷新自动关机按钮启动状态（v1.0.1 payload 追加 action 供文案/倒计时条跟随）
+                if (r == "ok") PostEvent("{\"kind\":\"auto-shutdown-changed\",\"payload\":{\"enabled\":" + (enabled ? "true" : "false")
+                    + ",\"action\":\"" + AppConfig.AutoShutdownAction + "\"}}");
                 return r;
             }
             catch (Exception ex) { return "err:" + ex.Message; }

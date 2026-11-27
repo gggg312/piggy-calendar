@@ -27,8 +27,12 @@
   var SYSTEM_ITEMS = [
     {
       key: 'autoStart', label: '开机自启',
-      desc: '登录 Windows 后自动启动小猪日历（HKCU 注册表 Run 键）',
       getter: 'GetAutostartEnabled', setter: 'SetAutostartEnabled'
+    },
+    /* v1.0.2 每日语录：日历下方显示一句语录，每天自动换一条（关闭后该栏隐藏、窗口高度回落） */
+    {
+      key: 'quoteEnabled', label: '每日语录',
+      getter: 'GetQuoteEnabled', setter: 'SetQuoteEnabled'
     }
   ];
 
@@ -36,7 +40,6 @@
   var SYNC_ITEMS = [
     {
       key: 'sync', label: '在线节假日同步',
-      desc: '启动后静默拉取当年 / 次年法定节假日，失败保留本地缓存',
       getter: 'GetSyncEnabled', setter: 'SetSyncEnabled'
     }
   ];
@@ -59,10 +62,9 @@
     getter: 'GetClockRealTime',
     setter: 'SetClockRealTime',
     label: '时钟显示',
-    desc: '小组件时间刷新方式',
     choices: [
-      { value: true, label: '实时更新', desc: '后台也实时刷新秒数，时间始终准确' },
-      { value: false, label: '按分钟更新', desc: '后台每分钟刷新，窗口激活时实时显示秒数' }
+      { value: true, label: '实时更新' },
+      { value: false, label: '按分钟更新' }
     ]
   };
 
@@ -105,7 +107,7 @@
   // 关于页静态文案（版本号由桥 GetVersion 动态填充）。
   var ABOUT = {
     name: '小猪日历 PiggyCalendar',
-    intro: 'Windows桌面悬浮日历小工具，带自动关机，设置提醒功能。',
+    intro: '桌面悬浮日历',
     github: 'https://github.com/gggg312/piggy-calendar',
     gitee: 'https://gitee.com/gaopeng262/piggy-calendar',
     donate: '若您觉得好用，可自愿微信扫码赞助，支持后续更新维护',

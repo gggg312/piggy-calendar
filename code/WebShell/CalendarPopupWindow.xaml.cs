@@ -296,6 +296,34 @@ namespace PiggyCalendar.WebShell
         /// 翻到节日少的月份时缩回设定宽；加宽时若窗口贴着屏幕右边界则保持右边界不动向左长，
         /// 否则保持左边界向右长；最后按窗口所在屏 clamp 一次，保证不被推出屏外。
         /// </summary>
+        /// <summary>
+        /// v1.0.2：每日语录开关切换后改窗口高度（600 / 560 基准按当前宽度换算的实际像素）。
+        /// 顶边保持不动，只向下长/向上收；下沿超出所在屏工作区时整体上移。宽度不动。
+        /// </summary>
+        public void FitWidgetHeight(double needHeight)
+        {
+            try
+            {
+                if (_resizeActive) return;
+                if (double.IsNaN(needHeight) || double.IsInfinity(needHeight) || needHeight <= 0) return;
+
+                var screen = System.Windows.Forms.Screen.FromPoint(
+                    new System.Drawing.Point((int)(Left + Width / 2), (int)(Top + Height / 2))).WorkingArea;
+                double target = Math.Max(AppConfig.MinWidgetHeight, Math.Min(needHeight, screen.Height));
+                if (Math.Abs(target - Height) < 1.5) return;
+
+                Height = target;
+                if (Top + Height > screen.Bottom) Top = Math.Max(screen.Top, screen.Bottom - Height);
+                SaveLayout();
+                AppLog.Write("[WIDGET] 语录高度自适应 need=" + needHeight.ToString("F0")
+                    + " -> H=" + Height.ToString("F0") + " T=" + Top.ToString("F0"));
+            }
+            catch (Exception ex)
+            {
+                AppLog.Write("[WIDGET] 语录高度自适应失败：" + ex.Message);
+            }
+        }
+
         public void FitWidgetWidth(double needWidth)
         {
             try
@@ -572,6 +600,8 @@ namespace PiggyCalendar.WebShell
                 Show();
                 Activate();
                 AppLog.Write("[WIDGET] 小组件已显示");
+                /* v1.0.2：通知前端已重新显示——语录据此比对日期（兜住休眠/隐藏期间跨过的 0 点） */
+                try { _bridge?.PostEvent("{\"kind\":\"widget-shown\"}"); } catch { }
             }
             catch (Exception ex)
             {

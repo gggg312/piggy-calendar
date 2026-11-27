@@ -25,6 +25,7 @@ window.addEventListener('unhandledrejection', function (e) {
 <script src="modules/manual-store.js"></script>
 <script src="modules/notice-parser.js"></script>
 <script src="modules/date-model.js"></script>
+<script src="modules/quotes-data.js"></script>
 <style>
 /* ============ M0-7：时间区 + 日历网格 + 农历/传统节日/手动节假日，五类整圆配色与休/班角标 ============ */
 :root{
@@ -130,8 +131,9 @@ body{font-family:'Microsoft YaHei UI','Microsoft YaHei','微软雅黑','PingFang
 /* 全局禁止文本选中：拖动窗口/缩放时不再高亮时钟、日期、网格文字 */
 body, #app, .stage, .stage *{user-select:none;-webkit-user-select:none}
 
-/* ---------- stage 基准画布：340×542 固定排版，由 ResizeObserver 计算 k 整体 scale ---------- */
-.stage{width:340px;height:542px;flex:none;display:flex;flex-direction:column;position:relative;transform-origin:center center}
+/* ---------- stage 基准画布：340×582 固定排版（v1.0.2 因「每日语录」由 542 加高 40），
+   由 ResizeObserver 计算 k 整体 scale；语录关闭时 height 回到 542 由 JS 覆写 ---------- */
+.stage{width:340px;height:582px;flex:none;display:flex;flex-direction:column;position:relative;transform-origin:center center}
 
 /* ---------- 顶部把手：判定区与线条同宽 52px、判定带高 24px，白线垂直居中；默认隐藏，鼠标进入窗口才显现 ---------- */
 .app-top{height:24px;display:flex;justify-content:center;align-items:center}
@@ -171,6 +173,32 @@ body, #app, .stage, .stage *{user-select:none;-webkit-user-select:none}
    （星期格 24 高文字居中留 6 + 网格首行 paddingTop 2 + 数字字形在 32 圆内上留白 9 ≈ 17）；
    .bottom-zone 是 flex:1，会吸收这段留白，图标上下留白随之从 16.5 收到 ~10.4 且保持相等 */
 .cal-card{display:flex;flex-direction:column;padding:8px 12px 13px} /* v0.1.6.64：底部 15→13，把 2px 让给底部工具区下边距 */
+
+/* ---------- 每日语录（v1.0.3）：日历卡之后、工具区之上的独立一栏 ----------
+   高度 40（含上分隔线 1）= 内 4 + 两行文本 30 + 内 4 + 余 1；box-sizing 保证总高正好 40，不挤占日历。
+   只保留上分隔线——下边线与工具区的 border-top 分工：这里不再画，避免与 bottom-zone 叠成双线；
+   关闭语录时整块不渲染，工具区的上边界仍由 bottom-zone 自己那条线承担。
+   左右箭头常占 26px 宽但默认透明，鼠标进入语录区才淡入（保证文字区宽度恒定、布局不跳） */
+.quote-zone{position:relative;box-sizing:border-box;display:flex;align-items:center;height:40px;margin:0 12px;
+  border-top:1px solid var(--div)}
+.qz-btn{flex:none;width:26px;height:24px;font-size:15px;opacity:0;pointer-events:none;transition:opacity .15s}
+.quote-zone:hover .qz-btn{opacity:.85;pointer-events:auto}
+.quote-zone:hover .qz-btn:hover{opacity:1}
+.quote-zone:hover .qz-btn:disabled{opacity:.25;pointer-events:none}
+.qz-body{flex:1;min-width:0;height:100%;display:flex;align-items:center;justify-content:center;position:relative}
+.qz-text{font-size:10.5px;line-height:15px;color:var(--text-2);text-align:left;padding:0 2px;
+  display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;max-width:100%;
+  transition:font-size .15s linear,line-height .15s linear}
+/* v1.0.3：出处气泡。语录已移到底部，上方是日历末行（空间充裕且压不到时钟/月份标题），
+   改为从语录区上沿向上展开；层级高于日历但不遮语录本身（pointer-events:none，不挡点击）。
+   宽度按内容自适应（max-content），上限 300px；文字左对齐，书名一行、版本页码一行。 */
+.quote-tip{position:absolute;bottom:calc(100% + 4px);left:0;right:0;margin:0 auto;z-index:40;
+  width:-webkit-max-content;width:max-content;max-width:300px;
+  padding:5px 10px;border-radius:7px;background:#23272e;
+  border:1px solid var(--border);font-size:10.5px;line-height:1.5;text-align:left;white-space:normal;
+  box-shadow:0 8px 22px rgba(0,0,0,.45);pointer-events:none}
+.qt-main{color:var(--text);white-space:normal}
+.qt-sub{color:var(--text-2);margin-top:1px;white-space:normal}
 
 .cal-head{display:flex;align-items:center;height:34px;padding:0 6px}
 /* v0.1.6.77：标题改为 flex:1 居中（箭头分置左右后不再需要定宽占位，月份字符数变化由居中吸收） */
@@ -649,6 +677,19 @@ html[data-theme="light"] .panel-bg.metal::after{
       </div>
     </section>
 
+    <!-- v1.0.3 每日语录：改到日历卡之后、工具区之上（日历主体不被切断）；只显示正文，出处走悬浮气泡；左右箭头 hover 才显 -->
+    <div v-if="quoteEnabled" class="quote-zone">
+      <button class="nav-btn qz-btn" type="button" :disabled="quotePrevDisabled" @click="quotePrev" aria-label="上一条语录">‹</button>
+      <div class="qz-body" @mouseenter="quoteTipShow = true" @mouseleave="quoteTipShow = false">
+        <div class="qz-text" :style="{ fontSize: quoteFontPx, lineHeight: quoteLineH }">{{ quoteText }}</div>
+        <div v-if="quoteTipShow" class="quote-tip">
+          <div class="qt-main">{{ quoteSourceMain }}</div>
+          <div v-if="quoteSourceSub" class="qt-sub">{{ quoteSourceSub }}</div>
+        </div>
+      </div>
+      <button class="nav-btn qz-btn" type="button" @click="quoteNext" aria-label="下一条语录">›</button>
+    </div>
+
         <div class="bottom-zone">
       <!-- v0.1.6.1：左下角=工具区（自动关机 + 未来新增小工具）；右下角=系统区（设置/关于） -->
       <!-- v0.1.6.23：提醒入口（bell-alert），位于自动关机左侧；当天有提醒时选中态（紫描边+小圆点） -->
@@ -663,7 +704,7 @@ html[data-theme="light"] .panel-bg.metal::after{
             <div class="qr-tip-2">长按快速提醒</div>
           </div>
         </div>
-        <button class="bottom-btn" :class="{ 'as-active': autoShutdownActive }" type="button" @click="openAutoShutdown"><span class="b-icon" v-html="toolSvg.power"></span><span v-if="autoShutdownActive" class="as-dot"></span><span v-if="shutdownCd" class="cd-txt" :data-tier="shutdownCd.tier">{{ shutdownCd.txt }}</span><span v-if="!shutdownCd" class="ui-tip">自动关机</span>
+        <button class="bottom-btn" :class="{ 'as-active': autoShutdownActive }" type="button" @click="openAutoShutdown"><span class="b-icon" v-html="toolSvg.power"></span><span v-if="autoShutdownActive" class="as-dot"></span><span v-if="shutdownCd" class="cd-txt" :data-tier="shutdownCd.tier">{{ shutdownCd.txt }}</span><span v-if="!shutdownCd" class="ui-tip">自动{{ shutdownActionCn }}</span>
           <div v-if="shutdownCd" class="cd-tip">
             <div class="cd-tip-1">{{ shutdownCd.label }}</div>
             <div class="cd-tip-2">还剩 {{ shutdownCd.time }}</div>
@@ -778,6 +819,7 @@ createApp({
     const lockHit = ref(false);
     const widgetOpacity = ref(100);
     const autoShutdownActive = ref(false); // v0.1.6.1：自动关机按钮启动状态
+    const shutdownActionCn = ref('关机');   // v1.0.1：当前动作中文名（关机/重启），驱动按钮提示与倒计时条 label
 
     /* ===== v0.1.6.55：工具按钮右侧「倒计时条」=====
        数据源：提醒 → ListReminders() 的 sortKey（Unix 秒）；自动关机 → GetAutoShutdownStatus() 的 remainingSeconds。
@@ -846,8 +888,10 @@ createApp({
         let st = null;
         try { st = typeof raw === 'string' ? JSON.parse(raw) : raw; } catch (_e) { return; }
         const rem = Number(st && st.remainingSeconds);
+        /* v1.0.1：动作名与启用态无关，先刷新（取消后按钮提示仍按最后设定显示） */
+        shutdownActionCn.value = (st && st.action === 'restart') ? '重启' : '关机';
         if (!st || !st.enabled || !isFinite(rem) || rem <= 0) { cdShutdown.value = null; return; }
-        cdShutdown.value = { at: Math.floor(Date.now() / 1000) + rem, label: '自动关机' };
+        cdShutdown.value = { at: Math.floor(Date.now() / 1000) + rem, label: '自动' + shutdownActionCn.value };
       }).catch(function () {});
     }
     const reminderActive = ref(false);     // v0.1.6.23：提醒入口选中态（当天有提醒）
@@ -904,15 +948,17 @@ createApp({
       tick();
     }
 
-    /* 等比缩放：stage 基准 340×542，按客户区宽/高比例取较小值整体 scale，保证不裁切、不溢出 */
+    /* 等比缩放：stage 基准 340×582（v1.0.2 语录开启）/ 340×542（语录关闭），
+       按客户区宽/高比例取较小值整体 scale，保证不裁切、不溢出 */
     const STAGE_BASE_W = 340;
-    const STAGE_BASE_H = 542;
+    let STAGE_BASE_H = 582;
     let stageK = 1;
     let gridRO = null;   // v0.1.6.33：记住当前缩放比，测出的内容宽要换算回窗口像素
     function applyStageScale() {
       const app = document.getElementById('app');
       const stage = stageEl.value;
       if (!app || !stage) return;
+      stage.style.height = STAGE_BASE_H + 'px';
       const k = Math.min(app.clientWidth / STAGE_BASE_W, app.clientHeight / STAGE_BASE_H);
       /* v0.1.6.33：宽度不再锁死在 340——窗口被壳层按日历内容加宽后，stage 跟着变宽，
          日历 7 列才真正变宽、表头与日期同列；窄于基准宽时仍按等比缩放，避免内容被挤 */
@@ -1502,8 +1548,30 @@ function applyRmDotColor(key) {
         }).catch(function () {});
       }
       loadHolidayStyle();
+
+      /* v1.0.2 每日语录：读开关与上次状态；开关关闭时画布高度回 542 */
+      if (window.Bridge && window.Bridge.invoke) {
+        window.Bridge.invoke('GetQuoteEnabled').then(function (v) {
+          quoteEnabled.value = !(v === false || v === 'false' || v === 0);
+          quoteSyncStage();
+        }).catch(function () {});
+        window.Bridge.invoke('GetQuoteState').then(function (raw) {
+          quoteLoadState(raw);
+        }).catch(function () { quoteLoadState(null); });
+      } else {
+        quoteLoadState(null);
+      }
+
       if (window.Bridge && window.Bridge.on) {
         window.Bridge.on('config-changed', p => {
+          if (p && typeof p.quoteEnabled !== 'undefined') {
+            var qon = !!p.quoteEnabled;
+            if (qon !== quoteEnabled.value) {
+              quoteEnabled.value = qon;
+              quoteApplyStageHeight();
+              if (qon) quoteCheckDay();
+            }
+          }
           if (p && typeof p.festivalEnabled !== 'undefined') extraFestEnabled.value = !!p.festivalEnabled;
           if (p && typeof p.festivalColor !== 'undefined') extraFestColor.value = p.festivalColor;
           if (p && typeof p.festivalStyle !== 'undefined') extraFestStyle.value = p.festivalStyle === 'outline' ? 'outline' : 'solid';
@@ -1513,6 +1581,8 @@ function applyRmDotColor(key) {
           if (p && typeof p.widgetGlassFinish !== 'undefined') applyGlassFinish(p.widgetGlassFinish);
           if (p && p.holidayStyle) loadHolidayStyle();
         });
+        /* 窗口重新显示 → 比对一次日期并重排 0 点定时器（兜住休眠/隐藏期间跨过的 0 点） */
+        window.Bridge.on('widget-shown', p => { quoteCheckDay(); quoteScheduleMidnight(); });
       }
 
       /* ③ 读取小组件外观配置：锁定状态初始值 */
@@ -2217,6 +2287,7 @@ function applyRmDotColor(key) {
       window.removeEventListener('keydown', dayMenuKey);
       window.removeEventListener('blur', dayMenuBlur);
       if (gridRO) { gridRO.disconnect(); gridRO = null; }
+      if (quoteDayTimer) { clearTimeout(quoteDayTimer); quoteDayTimer = 0; }
       qrClearHold(); qrUnbind();
       if (qrToastTimer) { clearTimeout(qrToastTimer); qrToastTimer = null; }
     });
@@ -2234,7 +2305,170 @@ function applyRmDotColor(key) {
       } catch (_e) {}
     }
 
-    return { stageEl, gridEl, barBands, timeText, dateLine, viewTitle, isCurrentMonth, weekNames: WEEK_CN, cells, pillStyle, subStyle, barStyle, sub2Style, circleStyle, badgeStyle, extraFestEnabled, extraFestColor, extraFestStyle, extraJieqiEnabled, extraJieqiColor, extraJieqiStyle, onDragStart, onResizeStart, prevMonth, nextMonth, gotoToday, onWheel, openAutoShutdown, openReminder, openSettings, openAbout, toolSvg, widgetLocked, widgetOpacity, autoShutdownActive, reminderActive, texture, dragging, glassFinish, lockHit, onLockToggle, onHideWidget,
+    /* ================= v1.0.2 每日语录 =================
+       规则：向后 = 从「未显示」里随机一条，记入已显示；向前 = 按历史栈回退；
+       全部显示完一轮 → 清空标记与历史，重新随机；
+       自动换日 = 0 点后切一条（随机，与手动同一套逻辑）；
+       关机多天只在启动时切一条（只比对日期是否变化，不按天数补切）。
+       状态落盘 运行组件\quote-state.json（壳层原子写），不用 localStorage（清缓存会丢）。 */
+
+    const QUOTE_LIST = (window.PiggyQuotes || []);
+    const QUOTE_TOTAL = QUOTE_LIST.length;
+    const quoteEnabled = ref(true);
+    const quoteTipShow = ref(false);
+    const quoteIdx = ref(1);
+    const quoteHistLen = ref(1);
+    let quoteState = { shown: [1], history: [1], lastAuto: '' };
+    let quoteDayTimer = 0;
+
+    const quoteText = computed(function () {
+      var q = QUOTE_LIST[quoteIdx.value - 1];
+      return q ? q.t : '';
+    });
+    const quoteSource = computed(function () {
+      var q = QUOTE_LIST[quoteIdx.value - 1];
+      return q ? q.s : '';
+    });
+    /* v1.0.2：出处拆两行——书名（含卷册）一行，出版社·版本·页码（或·篇名）一行。
+       避免一长串挤成三行；行二为空时只显示书名一行。 */
+    function quoteSplitSource(s) {
+      s = s || '';
+      var m = /^(《[^》]+》(?:第\s*[\d一二三四五六七八九十百]+\s*[卷册])?)/.exec(s);
+      if (!m) return [s, ''];
+      var rest = s.slice(m[1].length).replace(/^[，,、\s]+/, '');
+      return [m[1], rest];
+    }
+    const quoteSourceMain = computed(function () { return quoteSplitSource(quoteSource.value)[0]; });
+    const quoteSourceSub = computed(function () { return quoteSplitSource(quoteSource.value)[1]; });
+    const quotePrevDisabled = computed(function () { return quoteHistLen.value <= 1; });
+
+    /* 语录区固定 30px 高（两行），按字数分三档字号：字少做大字、字多自动缩小，保证 249 条全部两行内放完不截字
+       A ≤12 字 14px（一行，行高 18，居中）
+       B 13—26 字 12px（两行，行高 15 = 30px）
+       C ≥27 字 10.5px（两行，行高 15 = 30px） */
+    const quoteFontPx = computed(function () {
+      var n = (quoteText.value || '').length;
+      if (n <= 12) return '14px';
+      if (n <= 26) return '12px';
+      return '10.5px';
+    });
+    const quoteLineH = computed(function () {
+      var n = (quoteText.value || '').length;
+      return n <= 12 ? '18px' : '15px';
+    });
+
+    function quoteTodayStr() {
+      var d = new Date();
+      return d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate());
+    }
+    function quoteSave() {
+      try {
+        if (!(window.Bridge && window.Bridge.invoke)) return;
+        var st = {
+          current: quoteIdx.value,
+          shown: quoteState.shown,
+          history: quoteState.history,
+          lastAuto: quoteState.lastAuto
+        };
+        var p = window.Bridge.invoke('SetQuoteState', JSON.stringify(st));
+        if (p && p.catch) p.catch(function () {});
+      } catch (_e) {}
+    }
+    /* 从未显示集合里随机取；集合空 = 全库过完一轮 → 清空标记与历史后重来 */
+    function quotePickUnshown() {
+      var pool = [];
+      for (var k = 1; k <= QUOTE_TOTAL; k++) {
+        if (quoteState.shown.indexOf(k) < 0) pool.push(k);
+      }
+      if (!pool.length) {
+        quoteState.shown = [];
+        quoteState.history = [];
+        quoteHistLen.value = 0;
+        return quotePickUnshown();
+      }
+      return pool[Math.floor(Math.random() * pool.length)];
+    }
+    function quoteGoNext() {
+      if (!QUOTE_TOTAL) return;
+      var n = quotePickUnshown();
+      quoteIdx.value = n;
+      if (quoteState.shown.indexOf(n) < 0) quoteState.shown.push(n);
+      quoteState.history.push(n);
+      quoteHistLen.value = quoteState.history.length;
+      quoteSave();
+    }
+    function quoteNext() { quoteGoNext(); }
+    function quotePrev() {
+      if (quoteState.history.length <= 1) return;
+      quoteState.history.pop();
+      quoteIdx.value = quoteState.history[quoteState.history.length - 1];
+      quoteHistLen.value = quoteState.history.length;
+      quoteSave();
+    }
+    /* 日期变了才切一条（关机多少天都只切一条） */
+    function quoteCheckDay() {
+      if (!quoteEnabled.value || !QUOTE_TOTAL) return;
+      var t = quoteTodayStr();
+      if (quoteState.lastAuto !== t) {
+        quoteGoNext();
+        quoteState.lastAuto = t;
+        quoteSave();
+      }
+    }
+    /* 精确排到下一个 0 点后 5 秒；睡眠唤醒导致的延后由启动/显示时比对兜底 */
+    function quoteScheduleMidnight() {
+      if (quoteDayTimer) { clearTimeout(quoteDayTimer); quoteDayTimer = 0; }
+      var now = new Date();
+      var nx = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1, 0, 0, 5, 0);
+      var ms = nx.getTime() - now.getTime();
+      if (ms < 1000) ms = 1000;
+      quoteDayTimer = setTimeout(function () {
+        quoteCheckDay();
+        quoteScheduleMidnight();
+      }, ms);
+    }
+    /* 只改画布高度与缩放（启动、开关读取时用，不动窗口） */
+    function quoteSyncStage() {
+      STAGE_BASE_H = quoteEnabled.value ? 582 : 542;
+      applyStageScale();
+    }
+    /* 开关切换：画布高度 + 请求壳层改窗口高度（窗口基准 600/560，按当前宽 /360 换算） */
+    function quoteApplyStageHeight() {
+      quoteSyncStage();
+      try {
+        if (!(window.Bridge && window.Bridge.invoke)) return;
+        var app = document.getElementById('app');
+        var kUser = app && app.clientWidth ? (app.clientWidth / 360) : 1;
+        var baseWin = quoteEnabled.value ? 600 : 560;
+        var needH = Math.round(baseWin * kUser);
+        var p = window.Bridge.invoke('FitWidgetHeight', needH);
+        if (p && p.catch) p.catch(function () {});
+      } catch (_e) {}
+    }
+    function quoteLoadState(raw) {
+      try {
+        var st = typeof raw === 'string' ? JSON.parse(raw) : raw;
+        if (st && st.current) {
+          quoteIdx.value = st.current;
+          quoteState.shown = (Array.isArray(st.shown) && st.shown.length) ? st.shown : [st.current];
+          quoteState.history = (Array.isArray(st.history) && st.history.length) ? st.history : [st.current];
+          quoteState.lastAuto = st.lastAuto || '';
+        } else {
+          /* 首装：固定第 1 条，并把今天记为已自动切过 */
+          quoteIdx.value = 1;
+          quoteState.shown = [1];
+          quoteState.history = [1];
+          quoteState.lastAuto = quoteTodayStr();
+          quoteSave();
+        }
+      } catch (_e) {}
+      quoteHistLen.value = quoteState.history.length;
+      quoteCheckDay();
+      quoteScheduleMidnight();
+    }
+
+    return { stageEl, gridEl, barBands, timeText, dateLine, viewTitle, isCurrentMonth, weekNames: WEEK_CN, cells, pillStyle, subStyle, barStyle, sub2Style, circleStyle, badgeStyle, extraFestEnabled, extraFestColor, extraFestStyle, extraJieqiEnabled, extraJieqiColor, extraJieqiStyle, onDragStart, onResizeStart, prevMonth, nextMonth, gotoToday, onWheel, openAutoShutdown, openReminder, openSettings, openAbout, toolSvg, widgetLocked, widgetOpacity, autoShutdownActive, reminderActive, texture, dragging, glassFinish, lockHit, onLockToggle, onHideWidget, quoteEnabled, quoteText, quoteSource, quoteSourceMain, quoteSourceSub, quoteTipShow, quotePrev, quoteNext, quotePrevDisabled, quoteFontPx, quoteLineH,
+      shutdownActionCn,
       shutdownCd, reminderCd,
       qrHover, qrOpen, qrPressing, qrH, qrM, qrText, qrSound, qrBusy, qrErr, qrToast, qrMinutes, qrWheel,
       qrQuickMin: QR_QUICK_MIN, qrQuickHour: QR_QUICK_HOUR, qrPickMin, qrPickHour,

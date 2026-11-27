@@ -62,7 +62,9 @@ body{font-family:'Microsoft YaHei UI','Microsoft YaHei','微软雅黑','PingFang
 .set-row{display:flex;justify-content:space-between;align-items:center;gap:16px}
 .set-row .meta{flex:1;min-width:0}
 .set-label{font-size:13px;font-weight:600;color:var(--text)}
-.set-desc{font-size:11px;color:var(--text-3);margin:3px 0 10px;line-height:1.5} /* v0.1.6.7：底部留 10px，控件与上方提示文字不紧贴 */
+.set-desc{font-size:11px;color:var(--text-3);margin:3px 0 10px;line-height:1.5}
+/* v1.0.4：说明文字删减后，独立标题的卡片靠这条补回标题与控件之间的 10px（set-row 内的标题不受影响） */
+.set-card > .set-label{margin-bottom:10px} /* v0.1.6.7：底部留 10px，控件与上方提示文字不紧贴 */
 /* v0.1.6.28 分段切换按钮：控件放在标题下方、整行左对齐（替代圆点 radio；色系/质感不再配说明文字） */
 .seg-group{display:inline-flex;align-items:center;gap:4px;margin-top:10px;padding:4px;border-radius:10px;background:rgba(255,255,255,0.06);align-self:flex-start}
 .seg-btn{border:none;background:transparent;color:var(--text-2);font-family:inherit;font-size:12.5px;
@@ -193,7 +195,6 @@ body{font-family:'Microsoft YaHei UI','Microsoft YaHei','微软雅黑','PingFang
 .acc-head{display:flex;align-items:center;gap:10px;padding:13px 16px;cursor:pointer;user-select:none}
 .acc-head:hover{background:rgba(124,111,240,0.07)}
 .acc-title{font-size:13px;font-weight:600}
-.acc-sub{font-size:11px;color:var(--text-3)}
 .acc-chev{margin-left:auto;color:var(--text-3);font-size:13px;transition:transform .2s;flex:none}
 .acc-item.open>.acc-head .acc-chev{transform:rotate(90deg)}
 .acc-body{display:none;padding:0 16px 16px;border-top:1px solid var(--border)}
@@ -690,7 +691,6 @@ html[data-theme="light"] .rm-edit-card{background:rgba(124,111,240,.06)}
               <div id="acc-sync" class="acc-item" :class="{ open: openAcc.sync }">
                 <div class="acc-head" @click="toggleAcc('sync')">
                   <span class="acc-title">在线同步</span>
-                  <span class="acc-sub">在线同步节假日信息到日历</span>
                   <span class="acc-chev">›</span>
                 </div>
                 <div class="acc-body"><div class="pad-top">
@@ -698,7 +698,6 @@ html[data-theme="light"] .rm-edit-card{background:rgba(124,111,240,.06)}
                     <div class="set-row">
                       <div class="meta">
                         <div class="set-label">在线节假日同步</div>
-                        <div class="set-desc">在线获取节假日信息</div>
                       </div>
                       <el-switch :model-value="settingsMap.sync" @change="onToggle('sync')" />
                     </div>
@@ -713,7 +712,6 @@ html[data-theme="light"] .rm-edit-card{background:rgba(124,111,240,.06)}
                   <div v-if="settingsMap.sync" id="acc-sources" class="acc-item src-item" :class="{ open: openAcc.sources }">
                     <div class="acc-head" @click="toggleAcc('sources')">
                       <span class="acc-title">在线数据源</span>
-                      <span class="acc-sub">可自行修改数据源</span>
                       <span class="acc-chev">›</span>
                     </div>
                     <div class="acc-body"><div class="pad-top">
@@ -740,7 +738,6 @@ html[data-theme="light"] .rm-edit-card{background:rgba(124,111,240,.06)}
               <div id="acc-rec" class="acc-item" :class="{ open: openAcc.rec }">
                 <div class="acc-head" @click="toggleAcc('rec')">
                   <span class="acc-title">识别添加</span>
-                  <span class="acc-sub">识别假期通知批量添加</span>
                   <span class="acc-chev">›</span>
                 </div>
                 <div class="acc-body"><div class="pad-top">
@@ -802,7 +799,6 @@ html[data-theme="light"] .rm-edit-card{background:rgba(124,111,240,.06)}
               <div id="acc-manual" class="acc-item" :class="{ open: openAcc.manual }">
                 <div class="acc-head" @click="toggleAcc('manual')">
                   <span class="acc-title">手动添加</span>
-                  <span class="acc-sub">手动录入节假日信息</span>
                   <span class="acc-chev">›</span>
                 </div>
                 <div class="acc-body"><div class="pad-top">
@@ -870,7 +866,6 @@ html[data-theme="light"] .rm-edit-card{background:rgba(124,111,240,.06)}
               <div id="acc-mgmt" class="acc-item" :class="{ open: openAcc.mgmt }">
                 <div class="acc-head" @click="toggleAcc('mgmt')">
                   <span class="acc-title">添加管理</span>
-                  <span class="acc-sub">处理已添加节假日信息</span>
                   <span class="acc-chev">›</span>
                 </div>
                 <div class="acc-body"><div class="pad-top">
@@ -878,7 +873,6 @@ html[data-theme="light"] .rm-edit-card{background:rgba(124,111,240,.06)}
                     <div style="display:flex;justify-content:space-between;align-items:center;gap:12px">
                       <div class="meta">
                         <div class="set-label">已添加批次</div>
-                        <div class="set-desc">查看手动添加的节假日/调休</div>
                       </div>
                       <el-button size="small" class="del-btn" @click="doClearAllManual">清空全部</el-button>
                     </div>
@@ -923,7 +917,7 @@ html[data-theme="light"] .rm-edit-card{background:rgba(124,111,240,.06)}
                 <div class="set-row">
                   <div class="meta">
                     <div class="set-label">{{ item.label }}</div>
-                    <div class="set-desc">{{ item.desc }}</div>
+                    <div v-if="item.desc" class="set-desc">{{ item.desc }}</div>
                   </div>
                   <el-switch :model-value="settingsMap[item.key]" @change="onToggle(item.key)" />
                 </div>
@@ -934,7 +928,7 @@ html[data-theme="light"] .rm-edit-card{background:rgba(124,111,240,.06)}
                 <div class="set-row" style="align-items:flex-start">
                   <div class="meta">
                     <div class="set-label">{{ defs.CLOCK_OPTIONS.label }}</div>
-                    <div class="set-desc">{{ defs.CLOCK_OPTIONS.desc }}</div>
+                    <div v-if="defs.CLOCK_OPTIONS.desc" class="set-desc">{{ defs.CLOCK_OPTIONS.desc }}</div>
                   </div>
                 </div>
                 <div class="clock-choices">
@@ -944,7 +938,7 @@ html[data-theme="light"] .rm-edit-card{background:rgba(124,111,240,.06)}
                            :checked="settingsMap.clockRealTime === ch.value" @change="onClockMode(ch.value)">
                     <span class="cc-body">
                       <span class="cc-label">{{ ch.label }}</span>
-                      <span class="cc-desc">{{ ch.desc }}</span>
+                      <span v-if="ch.desc" class="cc-desc">{{ ch.desc }}</span>
                     </span>
                   </label>
                 </div>
@@ -1024,7 +1018,6 @@ html[data-theme="light"] .rm-edit-card{background:rgba(124,111,240,.06)}
                 <div class="set-row">
                   <div class="meta">
                     <div class="set-label">位置锁定</div>
-                    <div class="set-desc">锁定小组件位置与大小</div>
                   </div>
                   <el-switch :model-value="apLocked" @change="onLockedChange" />
                 </div>
@@ -1198,7 +1191,6 @@ html[data-theme="light"] .rm-edit-card{background:rgba(124,111,240,.06)}
               <!-- v0.1.6.63：提醒标记色——日期上的提醒点与底部提醒图标右上角角标共用这一个颜色 -->
               <div class="set-card">
                 <div class="set-label">提醒标记样式</div>
-                <div class="set-desc">日期上的提醒点、底部提醒图标右上角角标的颜色</div>
                 <div class="color-row hs-colors hs-tight">
                   <button v-for="c in defs.PALETTE" :key="'rmdot-' + c.key" type="button"
                     class="color-chip" :class="{ on: hsStyle.reminderDotColor === c.key }"
@@ -1221,17 +1213,26 @@ html[data-theme="light"] .rm-edit-card{background:rgba(124,111,240,.06)}
         <div class="as-body">
         <div class="set-card">
           <div class="set-label">当前状态</div>
-          <!-- v0.1.6.4：状态文字醒目色（已开启绿 / 未开启灰），置顶一眼可见 -->
-          <div class="as-status" :class="asActive ? 'on' : 'off'">{{ asStatusText }}</div>
+          <!-- v0.1.6.4：状态文字醒目色（已开启绿 / 未开启灰），置顶一眼可见；v1.0.1 未开启态随动作变化 -->
+          <div class="as-status" :class="asActive ? 'on' : 'off'">{{ asActive ? asStatusText : asIdleText }}</div>
           <div class="as-row">
             <!-- v0.1.6.20：取消按钮回原位——「启动自动关机」按钮就地切换为「取消自动关机」（撤消 v0.1.6.18 底部危险操作卡） -->
-            <button v-if="!asActive" class="as-btn primary" @click="doAsStart">启动自动关机</button>
-            <button v-else class="as-btn danger" @click="doCancel">取消自动关机</button>
+            <button v-if="!asActive" class="as-btn primary" @click="doAsStart">启动自动{{ asActionCn }}</button>
+            <button v-else class="as-btn danger" @click="doCancel">取消自动{{ asActionCn }}</button>
+          </div>
+        </div>
+        <!-- v1.0.1：任务动作二选一（关机 / 重启）。沿用本页既有 seg-group/seg-btn 样式，不新造控件 -->
+        <div class="set-card">
+          <div class="set-label">任务动作</div>
+          <div class="as-row">
+            <div class="seg-group">
+              <button type="button" class="seg-btn" :class="{ on: asAction === 'shutdown' }" @click="asAction = 'shutdown'">关机</button>
+              <button type="button" class="seg-btn" :class="{ on: asAction === 'restart' }" @click="asAction = 'restart'">重启</button>
+            </div>
           </div>
         </div>
         <div class="set-card">
-          <div class="set-label">关机时刻</div>
-          <div class="set-desc">每天/每周/每月的指定时刻关机</div>
+          <div class="set-label">{{ asActionCn }}时刻</div>
           <div class="as-nums">
             <div class="as-num-col">
               <div class="as-num-wrap">
@@ -1252,7 +1253,6 @@ html[data-theme="light"] .rm-edit-card{background:rgba(124,111,240,.06)}
         </div>
         <div class="set-card">
           <div class="set-label">重复周期</div>
-          <div class="set-desc">按每天、每周固定星期、或每月固定日期重复</div>
           <div class="as-row">
             <div class="seg-group">
               <button type="button" class="seg-btn" :class="{ on: asRepeat === 'daily' }" @click="asRepeat = 'daily'">每天</button>
@@ -1278,8 +1278,8 @@ html[data-theme="light"] .rm-edit-card{background:rgba(124,111,240,.06)}
           </div>
         </div>
         <div class="set-card">
-          <div class="set-label">关机前提前提示</div>
-          <div class="set-desc">到点前多久弹出提醒；0 = 不提醒</div>
+          <div class="set-label">{{ asActionCn }}前提前提示</div>
+          <div class="set-desc">0 表示不提醒</div>
           <div class="as-nums">
             <div class="as-num-col">
               <div class="as-num-wrap">
@@ -1491,7 +1491,6 @@ html[data-theme="light"] .rm-edit-card{background:rgba(124,111,240,.06)}
           <!-- 已添加提醒列表：单次/重复折叠分组，组内到期时间升序 -->
           <div class="set-card" id="acc-rmlist">
             <div class="set-label">已添加提醒</div>
-            <div class="set-desc">查看已添加的提醒清单；可按日期筛选</div>
             <!-- v0.1.6.65（方案 ③+①）：日期过滤器 = 快捷段（全部/今日/本周/本月）+ 自绘日历选某天 -->
             <div class="rm-days">
               <div class="seg-group">
@@ -2114,12 +2113,17 @@ createApp({
       });
     }
 
-    /* ---------- 自动关机（② v0.1.6.1 周期版 + 自绘滚轮控件） ---------- */
+    /* ---------- 自动关机/重启（② v0.1.6.1 周期版 + 自绘滚轮控件；v1.0.1 动作二选一） ---------- */
     const asEnabled = ref(false);
+    const asAction = ref('shutdown');  // v1.0.1：shutdown=关机 / restart=重启（只影响执行命令，周期逻辑一致）
     const asRepeat = ref('daily');     // daily / weekly / monthly
     const asWeekdays = ref([false, false, false, false, false, false, false]); // 周一..周日
     const asStatusText = ref('未开启自动关机');
     const asActive = ref(false);
+    /* v1.0.1：动作中文名，模板与提示语统一取它，避免多处硬编码「关机」 */
+    const asActionCn = computed(function () { return asAction.value === 'restart' ? '重启' : '关机'; });
+    /* v1.0.1：未开启态文案随动作实时变化（用户切换动作时即刻跟随，无需重新读取状态） */
+    const asIdleText = computed(function () { return '未开启自动' + asActionCn.value; });
     const asMsg = ref('');
     const asErr = ref(false);
     const WEEK_LABELS = ['周一', '周二', '周三', '周四', '周五', '周六', '周日'];
@@ -2172,6 +2176,7 @@ createApp({
         if (!s) { asStatusText.value = '未开启自动关机'; return; }
         asEnabled.value = !!s.enabled;
         asActive.value = !!s.enabled; // v0.1.6.3：按钮两状态，只要有任务即显示「取消自动关机」
+        if (s.action === 'restart' || s.action === 'shutdown') asAction.value = s.action; // v1.0.1：动作回填
         if (s.time) {
           var hh = s.time.split(':')[0], mm = s.time.split(':')[1];
           var hi = Math.max(0, Math.min(23, Number(hh))), mi = Math.max(0, Math.min(59, Number(mm)));
@@ -2195,7 +2200,8 @@ createApp({
           repeatDesc = '每月 ' + (s.monthDay || '') + ' 号';
         }
         var adv = (typeof s.advanceMinutes === 'number' && s.advanceMinutes > 0) ? '，提前 ' + s.advanceMinutes + ' 分钟提醒' : '';
-        var main = '已开启 · ' + repeatDesc + ' ' + (s.time || '') + ' 关机' + adv;
+        var cn = (s.action === 'restart') ? '重启' : '关机'; // v1.0.1：状态卡文案随动作
+        var main = '已开启 · ' + repeatDesc + ' ' + (s.time || '') + ' ' + cn + adv;
         if (s.target) {
           var remain = s.remainingSeconds || 0;
           var h = Math.floor(remain / 3600), m = Math.floor((remain % 3600) / 60);
@@ -2217,7 +2223,8 @@ createApp({
         repeatType: asRepeat.value,
         weekdays: weekdays.join(','),
         monthDay: asMonthDay.value,
-        advanceMinutes: asAdvance.value
+        advanceMinutes: asAdvance.value,
+        action: asAction.value // v1.0.1：动作类型透传后端
       };
     }
 
@@ -2249,10 +2256,10 @@ createApp({
       if (reschedTimer) clearTimeout(reschedTimer);
       reschedTimer = setTimeout(doReschedule, 1000);
     }
-    watch([asHourNum, asMinNum, asMonthDayNum, asAdvanceNum, asRepeat, asWeekdays], scheduleReschedule, { deep: true });
+    watch([asHourNum, asMinNum, asMonthDayNum, asAdvanceNum, asRepeat, asWeekdays, asAction], scheduleReschedule, { deep: true });
 
     function doAsStart() {
-      if (!asTime.value) { ElementPlus.ElMessage.error('请选择关机时刻'); return; }
+      if (!asTime.value) { ElementPlus.ElMessage.error('请选择' + asActionCn.value + '时刻'); return; }
       if (asRepeat.value === 'weekly' && !asWeekdays.value.some(Boolean)) { ElementPlus.ElMessage.error('请至少选择一个星期'); return; }
       store.setAutoShutdown(buildAsConfig()).then(function (r) {
         if (r.ok) { ElementPlus.ElMessage.success(r.msg); loadAutoShutdown(); } // v0.1.6.3：启动后不关闭窗口，按钮就地切换为「取消自动关机」
@@ -3459,6 +3466,7 @@ var extraCardOpen = ref(false);
       toggleMfr, pickMfrDay, mfrPrevMonth, mfrNextMonth, clearMfr, closeMfr,
       mfnOpen, mfnPos, onMfnFocus, onMfnInput, onMfnBlur, toggleMfn, pickMfn,
       asEnabled, asRepeat, asWeekdays, WEEK_LABELS,
+      asAction, asActionCn, asIdleText,
       asHourNum, asMinNum, asMonthDayNum, asAdvanceNum, onNumWheel, onNumBlur,
       asStatusText, asActive, asMsg, asErr,
       onAsEnabledChange, doAsStart, doCancel,

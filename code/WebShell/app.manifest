@@ -2,7 +2,7 @@
 <assembly manifestVersion="1.0" xmlns="urn:schemas-microsoft-com:asm.v1">
   <!-- 程序集标识：此 version 仅作 SxS 标识，不参与产品版本号，也不被 WPF 读取；
        原值 0.1.6.15 是历史遗留的陈旧串，已固定为 1.0.0.0，避免每版都要同步（v0.1.6.97） -->
-  <assemblyIdentity version="1.0.0.0" name="PiggyCalendar.WebShell" />
+  <assemblyIdentity version="1.1.0.0" name="PiggyCalendar.WebShell" />
 
   <!-- DPI 感知：PerMonitorV2（.NET Framework 4.7.2 WPF 支持），小组件窗坐标按物理像素计算 -->
   <application xmlns="urn:schemas-microsoft-com:asm.v3">

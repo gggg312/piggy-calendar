@@ -173,7 +173,8 @@ namespace PiggyCalendar.WebShell
                     openReminderAt: ymd => SafeInvoke(() => OpenReminderAt(ymd)),
                     openReminderManage: (ymd, ids) => SafeInvoke(() => OpenReminderManage(ymd, ids)),
                     closeReminder: () => SafeInvoke(CloseReminderPanel),
-                    fitWidgetWidth: px => SafeInvoke(() => _widget.FitWidgetWidth(px)));
+                    fitWidgetWidth: px => SafeInvoke(() => _widget.FitWidgetWidth(px)),
+                    fitWidgetHeight: px => SafeInvoke(() => _widget.FitWidgetHeight(px)));
                 bridge.BindAppearance(() => SafeInvoke(() => _widget.ApplyAppearance()));
 
                 // M0-8c：绑定同步引擎（复用桥的 remote 读写与事件出口），启动后按状态机静默同步。
@@ -621,6 +622,7 @@ namespace PiggyCalendar.WebShell
                 // v0.1.6.17：弹窗从调度服务实时读当前目标，用户改时间后自动跟随新目标倒计时
                 var w = new ShutdownRemindWindow(
                     targetProvider: () => AutoShutdownService.Instance.CurrentTarget,
+                    actionProvider: () => AutoShutdownService.Instance.CurrentAction,
                     onCancelOnce: () => SafeInvoke(() => AutoShutdownService.Instance.SkipOnce()),
                     onClosed: () => { _remindWindow = null; });
                 _remindWindow = w;

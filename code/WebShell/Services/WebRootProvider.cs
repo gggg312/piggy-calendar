@@ -38,6 +38,7 @@ namespace PiggyCalendar.WebShell.Services
             { "modules.notice-parser.js", "modules\\notice-parser.js" },
             { "modules.date-model.js",    "modules\\date-model.js" },
             { "modules.panel-store.js",   "modules\\panel-store.js" },
+            { "modules.quotes-data.js",   "modules\\quotes-data.js" },
             { "assets.app-icon.png",      "assets\\app-icon.png" },
             { "assets.donate.jpg",        "assets\\赞赏码_small.jpg" }
         };

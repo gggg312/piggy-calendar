@@ -6,9 +6,11 @@ using System.Threading;
 namespace PiggyCalendar.WebShell.Services
 {
     /// <summary>
-    /// 自动关机调度服务（②，v0.1.6.0 周期版）：支持开启开关 + 时刻 + 重复周期（每天/每周几/每月号）+ 关机前提前提醒。
+    /// 自动关机/重启调度服务（②，v0.1.6.0 周期版；v1.0.1 加动作二选一）：
+    /// 支持开启开关 + 时刻 + 重复周期（每天/每周几/每月号）+ 到点前提前提醒 + 动作（关机/重启）。
     /// 配置持久化于 config.ini（AppConfig.AutoShutdown*）；重启后未到点则恢复调度。
-    /// 到点执行 shutdown /s /t 30（Windows 30 秒倒计时缓冲，期间用户可 shutdown /a 取消）。
+    /// 到点执行 shutdown /s|/r /t 30（Windows 30 秒倒计时缓冲，期间用户可 shutdown /a 取消）。
+    /// 动作只影响执行命令，调度模型（单目标）与周期逻辑两种动作完全一致。
     /// </summary>
     internal class AutoShutdownService
     {
@@ -25,6 +27,9 @@ namespace PiggyCalendar.WebShell.Services
 
         /// <summary>当前调度目标时刻（供提醒弹窗实时跟随；null=无任务）。v0.1.6.17</summary>
         public DateTime? CurrentTarget { get { return _target; } }
+
+        /// <summary>当前动作（供提醒弹窗实时读取，用户切换关机/重启后文案立即跟随）。v1.0.1</summary>
+        public string CurrentAction { get { return AppConfig.AutoShutdownAction; } }
 
         private AutoShutdownService()
         {
@@ -45,14 +50,14 @@ namespace PiggyCalendar.WebShell.Services
             }
             _advanceFiredAt = null;
             ComputeAndSchedule(DateTime.Now);
-            AppLog.Write("[SHUTDOWN] 恢复调度：周期=" + AppConfig.AutoShutdownRepeatType
+            AppLog.Write("[SHUTDOWN] 恢复调度：动作=" + ActionText() + " 周期=" + AppConfig.AutoShutdownRepeatType
                 + " 时刻=" + AppConfig.AutoShutdownTime
                 + " 提前=" + AppConfig.AutoShutdownAdvanceMinutes + "分"
                 + " 目标=" + TargetText() + "，定时器已启动");
         }
 
-        /// <summary>设置自动关机（周期配置）。返回 "ok" 或 "err:..."。</summary>
-        public string Configure(bool enabled, string time, string repeatType, string weekdays, int monthDay, int advanceMinutes)
+        /// <summary>设置自动关机/重启（周期配置）。返回 "ok" 或 "err:..."。action: shutdown|restart（v1.0.1）。</summary>
+        public string Configure(bool enabled, string time, string repeatType, string weekdays, int monthDay, int advanceMinutes, string action)
         {
             // 记录旧配置，用于判定「配置是否真变更」（v0.1.6.17 加固：前端循环保存同一配置不得重算目标）
             bool oldEnabled = AppConfig.AutoShutdownEnabled;
@@ -61,6 +66,7 @@ namespace PiggyCalendar.WebShell.Services
             string oldWeekdays = AppConfig.AutoShutdownWeekdays;
             int oldMonthDay = AppConfig.AutoShutdownMonthDay;
             int oldAdvance = AppConfig.AutoShutdownAdvanceMinutes;
+            string oldAction = AppConfig.AutoShutdownAction;
 
             AppConfig.AutoShutdownEnabled = enabled;
             AppConfig.AutoShutdownTime = time ?? "";
@@ -68,6 +74,7 @@ namespace PiggyCalendar.WebShell.Services
             AppConfig.AutoShutdownWeekdays = weekdays ?? "";
             AppConfig.AutoShutdownMonthDay = monthDay;
             AppConfig.AutoShutdownAdvanceMinutes = advanceMinutes;
+            AppConfig.AutoShutdownAction = NormalizeAction(action);
             AppConfig.Save();
 
             if (!enabled || string.IsNullOrWhiteSpace(time))
@@ -75,7 +82,7 @@ namespace PiggyCalendar.WebShell.Services
                 _target = null;
                 _advanceFiredAt = null;
                 _timer.Change(Timeout.Infinite, Timeout.Infinite);
-                AppLog.Write("[SHUTDOWN] 自动关机已关闭");
+                AppLog.Write("[SHUTDOWN] 自动" + ActionText() + "已关闭");
                 return "ok";
             }
 
@@ -84,7 +91,8 @@ namespace PiggyCalendar.WebShell.Services
                 || !string.Equals(repeatType, oldRepeat, StringComparison.Ordinal)
                 || !string.Equals(weekdays, oldWeekdays, StringComparison.Ordinal)
                 || monthDay != oldMonthDay
-                || advanceMinutes != oldAdvance;
+                || advanceMinutes != oldAdvance
+                || !string.Equals(AppConfig.AutoShutdownAction, oldAction, StringComparison.Ordinal);
 
             if (configChanged)
             {
@@ -95,10 +103,22 @@ namespace PiggyCalendar.WebShell.Services
             }
             // else：配置未变（前端每秒循环保存同一配置）→ 保留 _target/_skipTarget/_advanceFiredAt，
             // 不重算目标，避免整点被推到下一周期导致到点不执行（v0.1.6.17 根因加固）。
-            AppLog.Write("[SHUTDOWN] 自动关机已调度 " + AppConfig.AutoShutdownRepeatType + " " + time
+            AppLog.Write("[SHUTDOWN] 自动" + ActionText() + "已调度 " + AppConfig.AutoShutdownRepeatType + " " + time
                 + "（配置" + (configChanged ? "有变更，已重算" : "未变更，保留原排程") + "）目标=" + TargetText()
                 + " 提前=" + advanceMinutes + "分");
             return "ok";
+        }
+
+        /// <summary>动作白名单归一：只认 restart，其余一律 shutdown（v1.0.1）。</summary>
+        private static string NormalizeAction(string action)
+        {
+            return string.Equals(action, "restart", StringComparison.OrdinalIgnoreCase) ? "restart" : "shutdown";
+        }
+
+        /// <summary>当前动作的中文名（日志/文案用）。</summary>
+        private static string ActionText()
+        {
+            return AppConfig.AutoShutdownAction == "restart" ? "重启" : "关机";
         }
 
         private string TargetText()
@@ -115,22 +135,22 @@ namespace PiggyCalendar.WebShell.Services
             _advanceFiredAt = null;
             _skipTarget = null;
             _timer.Change(Timeout.Infinite, Timeout.Infinite);
-            AppLog.Write("[SHUTDOWN] 自动关机已取消");
+            AppLog.Write("[SHUTDOWN] 自动" + ActionText() + "已取消");
             return "ok";
         }
 
-        /// <summary>跳过本次自动关机（v0.1.6.10，方案A）：本次到点不关机，开关保持开启，下一周期照常排程。</summary>
+        /// <summary>跳过本次自动关机/重启（v0.1.6.10，方案A）：本次到点不执行，开关保持开启，下一周期照常排程。</summary>
         public string SkipOnce()
         {
             if (_target.HasValue)
             {
                 _skipTarget = _target;
-                AppLog.Write("[SHUTDOWN] 用户跳过本次关机 " + _target.Value.ToString("yyyy-MM-dd HH:mm") + "，下个周期照常");
+                AppLog.Write("[SHUTDOWN] 用户跳过本次" + ActionText() + " " + _target.Value.ToString("yyyy-MM-dd HH:mm") + "，下个周期照常");
             }
             return "ok";
         }
 
-        /// <summary>当前自动关机调度状态 JSON：{enabled,time,repeatType,weekdays,monthDay,advanceMinutes,target,remainingSeconds}。</summary>
+        /// <summary>当前调度状态 JSON：{enabled,time,repeatType,weekdays,monthDay,advanceMinutes,action,target,remainingSeconds}。</summary>
         public string GetStatus()
         {
             var d = new Dictionary<string, object>
@@ -141,6 +161,7 @@ namespace PiggyCalendar.WebShell.Services
                 ["weekdays"] = AppConfig.AutoShutdownWeekdays,
                 ["monthDay"] = AppConfig.AutoShutdownMonthDay,
                 ["advanceMinutes"] = AppConfig.AutoShutdownAdvanceMinutes,
+                ["action"] = AppConfig.AutoShutdownAction,
                 ["target"] = _target.HasValue ? _target.Value.ToString("yyyy-MM-dd HH:mm") : "",
                 ["remainingSeconds"] = _target.HasValue ? (int)Math.Max(0, (_target.Value - DateTime.Now).TotalSeconds) : 0
             };
@@ -235,7 +256,7 @@ namespace PiggyCalendar.WebShell.Services
                     {
                         // 方案A：用户已「取消本次」——不关机，保留开关，排下一周期
                         _skipTarget = null;
-                        AppLog.Write("[SHUTDOWN] 已跳过本次关机 " + t.ToString("yyyy-MM-dd HH:mm"));
+                        AppLog.Write("[SHUTDOWN] 已跳过本次" + ActionText() + " " + t.ToString("yyyy-MM-dd HH:mm"));
                         if (AppConfig.AutoShutdownEnabled)
                             ComputeAndSchedule(DateTime.Now);
                         else
@@ -244,12 +265,12 @@ namespace PiggyCalendar.WebShell.Services
                     else if (AppConfig.AutoShutdownEnabled)
                     {
                         ComputeAndSchedule(DateTime.Now);
-                        AppLog.Write("[SHUTDOWN] 到达目标 " + t.ToString("yyyy-MM-dd HH:mm") + "，执行关机；下个周期=" + TargetText());
+                        AppLog.Write("[SHUTDOWN] 到达目标 " + t.ToString("yyyy-MM-dd HH:mm") + "，执行" + ActionText() + "；下个周期=" + TargetText());
                         ExecuteShutdown();
                     }
                     else
                     {
-                        AppLog.Write("[SHUTDOWN] 到达目标 " + t.ToString("yyyy-MM-dd HH:mm") + "，但开关已关闭，不执行关机");
+                        AppLog.Write("[SHUTDOWN] 到达目标 " + t.ToString("yyyy-MM-dd HH:mm") + "，但开关已关闭，不执行" + ActionText());
                         _timer.Change(Timeout.Infinite, Timeout.Infinite);
                     }
                 }
@@ -261,23 +282,25 @@ namespace PiggyCalendar.WebShell.Services
         {
             try
             {
-                // /t 30：30 秒倒计时缓冲，期间可 shutdown /a 取消
-                Process.Start(new ProcessStartInfo("shutdown", "/s /t 30") { CreateNoWindow = true, UseShellExecute = false });
-                AppLog.Write("[SHUTDOWN] 已调用 shutdown /s /t 30 发起关机（30 秒缓冲，期间 shutdown /a 可取消）");
-                // v0.1.6.32 审计：45 秒后本进程仍活着 → 关机没有真正发生（被取消 / 被系统策略或权限拒绝）
+                bool restart = AppConfig.AutoShutdownAction == "restart";
+                string arg = restart ? "/r /t 30" : "/s /t 30";
+                // /t 30：30 秒倒计时缓冲，期间可 shutdown /a 取消（关机与重启一致）
+                Process.Start(new ProcessStartInfo("shutdown", arg) { CreateNoWindow = true, UseShellExecute = false });
+                AppLog.Write("[SHUTDOWN] 已调用 shutdown " + arg + " 发起" + ActionText() + "（30 秒缓冲，期间 shutdown /a 可取消）");
+                // v0.1.6.32 审计：45 秒后本进程仍活着 → 任务没有真正发生（被取消 / 被系统策略或权限拒绝）
                 var th = new Thread(() =>
                 {
                     try
                     {
                         Thread.Sleep(45000);
-                        AppLog.Write("[SHUTDOWN] 45 秒后进程仍在运行：关机未生效（可能被 shutdown /a 取消，或被系统策略/权限拒绝）");
+                        AppLog.Write("[SHUTDOWN] 45 秒后进程仍在运行：" + ActionText() + "未生效（可能被 shutdown /a 取消，或被系统策略/权限拒绝）");
                     }
                     catch { }
                 });
                 th.IsBackground = true;
                 th.Start();
             }
-            catch (Exception ex) { AppLog.Write("[SHUTDOWN] 执行关机失败：" + ex.Message); }
+            catch (Exception ex) { AppLog.Write("[SHUTDOWN] 执行" + ActionText() + "失败：" + ex.Message); }
         }
     }
 }

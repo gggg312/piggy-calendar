@@ -18,7 +18,7 @@ namespace PiggyCalendar.WebShell.Services
         public static int WidgetPosX = -1;              // 小组件左上角 X；-1 = 未记忆位置，使用默认落点
         public static int WidgetPosY = -1;              // 小组件左上角 Y；-1 = 未记忆位置
         public static int WidgetWidth = 360;            // 小组件宽度（M0-8a 可缩放记忆；最小 320）
-        public static int WidgetHeight = 560;           // 小组件高度（M0-8a 可缩放记忆；最小 510）
+        public static int WidgetHeight = 600;           // 小组件高度（M0-8a 可缩放记忆；最小 510；v1.0.2 基准 600 含语录栏）
         public static bool LunarEnabled = true;         // 显示农历副标题，默认开启
         public static bool AutoStartEnabled = false;    // 开机自启，默认关闭
         public static bool SyncEnabled = true;          // M0-8c 在线节假日静默同步，默认开启
@@ -30,6 +30,7 @@ namespace PiggyCalendar.WebShell.Services
         public static string AutoShutdownWeekdays = "";  // weekly 每周几 '1,3,5'（1=周一..7=周日）（②）
         public static int AutoShutdownMonthDay = 1;      // monthly 每月几号（②）
         public static int AutoShutdownAdvanceMinutes = 15; // 关机前提前提醒分钟（②）
+        public static string AutoShutdownAction = "shutdown"; // 自动任务动作 shutdown=关机 / restart=重启（v1.0.1 方案A）；缺省关机，兼容旧配置
         public static bool WidgetLocked = false;         // 小组件位置锁定：禁拖动+禁缩放（③）
         public static int WidgetOpacityPercent = 100;    // 【v0.1.6.30 起降级为纯色镜像】旧的全局透明度，仅保留键名兼容；真实来源见 PlainOpacityPercent
         public static string WidgetTheme = "dark";       // 小组件主题 light/dark（v0.1.6.8 浅色主题；默认深色；三材质共用）
@@ -87,6 +88,9 @@ namespace PiggyCalendar.WebShell.Services
     // ---------- v0.1.6.63 「提醒标记色」：日期紫点 + 底部提醒图标右上角角标共用 ----------
     public static string ReminderDotColor = "iris";   // 提醒点颜色键（默认紫晶 #8B7FF5，与旧硬编码 #8b7ff5 同值）
 
+        // ---------- v1.0.2 每日语录（日历上方一栏，只显示正文，出处走悬浮气泡） ----------
+        public static bool QuoteEnabled = true;          // 每日语录开关，默认开启（关闭后该栏隐藏、窗口高度回落）
+
         // ---------- v0.1.6.38 在线数据源（4 槽，用户可改地址/可单独启停） ----------
         // 槽 4 出厂为空且不启用，留给用户自己填；地址里 {year} 会在请求时替换为年份。
         public static readonly string[] DefaultSyncSourceUrl = new string[]
@@ -100,17 +104,24 @@ namespace PiggyCalendar.WebShell.Services
         public static readonly string[] SyncSourceUrl = new string[] { DefaultSyncSourceUrl[0], DefaultSyncSourceUrl[1], DefaultSyncSourceUrl[2], "" };
         public static readonly bool[] SyncSourceEnabled = new bool[] { true, true, true, false };
 
-        /// <summary>基准外框尺寸（前端 stage 设计基准；窗口宽高始终保持 360:560 等比）。</summary>
+        /// <summary>基准外框尺寸（前端 stage 设计基准 340×582 有条语录 / 340×542 无；窗口按基准等比）。
+        /// v1.0.2「每日语录」：开 = 600（582 画布 + 18 余量，沿用原 560/542 的同一差值），关 = 560。</summary>
         public const int BaseWidgetWidth = 360;
-        public const int BaseWidgetHeight = 560;
+        public const int BaseWidgetHeightQuote = 600;
+        public const int BaseWidgetHeightNoQuote = 560;
+        public static int BaseWidgetHeight
+        {
+            get { return QuoteEnabled ? BaseWidgetHeightQuote : BaseWidgetHeightNoQuote; }
+        }
 
         /// <summary>等比缩放系数上下限（模型 A：整体 transform:scale，内容随系数同步放大缩小）。</summary>
         public const double MinScale = 0.85;
         public const double MaxScale = 1.5;
 
-        /// <summary>最小窗口尺寸（基准 × 最小系数；等比模型下不再独立钳制宽高）。</summary>
+        /// <summary>最小窗口尺寸（基准 × 最小系数；等比模型下不再独立钳制宽高）。
+        /// 高度下限按「无语录」基准算，否则关掉语录时无法缩到应有的高度。</summary>
         public static int MinWidgetWidth { get { return (int)Math.Round(BaseWidgetWidth * MinScale); } }
-        public static int MinWidgetHeight { get { return (int)Math.Round(BaseWidgetHeight * MinScale); } }
+        public static int MinWidgetHeight { get { return (int)Math.Round(BaseWidgetHeightNoQuote * MinScale); } }
 
         private static IniFileHelper _ini;
 
@@ -200,6 +211,12 @@ namespace PiggyCalendar.WebShell.Services
             get { return Path.Combine(RuntimeDir, "reminder.json"); }
         }
 
+        /// <summary>每日语录状态 JSON 路径（v1.0.2：当前条、已显示集合、历史栈、最后自动换日日期）。</summary>
+        public static string QuoteStatePath
+        {
+            get { return Path.Combine(RuntimeDir, "quote-state.json"); }
+        }
+
         private static IniFileHelper Ini
         {
             get { return _ini ?? (_ini = new IniFileHelper(IniPath)); }
@@ -213,6 +230,8 @@ namespace PiggyCalendar.WebShell.Services
                 WidgetVisible = Ini.GetBool(Section, "widgetVisible", true);
                 WidgetPosX = Ini.GetInt(Section, "widgetPosX", -1);
                 WidgetPosY = Ini.GetInt(Section, "widgetPosY", -1);
+                /* v1.0.2：语录开关必须先读——窗口高度基准（600/560）依赖它 */
+                QuoteEnabled = Ini.GetBool(Section, "quoteEnabled", true);
                 int w = Ini.GetInt(Section, "widgetWidth", 360);
                 int h = Ini.GetInt(Section, "widgetHeight", 560);
                 // 等比模型：以宽度反推系数并钳制上下限，高度按基准比例重算，保证宽高比恒定。
@@ -230,6 +249,8 @@ namespace PiggyCalendar.WebShell.Services
                 AutoShutdownWeekdays = Ini.GetString(Section, "autoShutdownWeekdays", "");
                 AutoShutdownMonthDay = Math.Max(1, Math.Min(31, Ini.GetInt(Section, "autoShutdownMonthDay", 1)));
                 AutoShutdownAdvanceMinutes = Math.Max(0, Math.Min(59, Ini.GetInt(Section, "autoShutdownAdvanceMinutes", 15)));
+                // v1.0.1 方案A：动作类型白名单校验，非法/缺失一律回落 shutdown（旧配置文件升级后仍按关机）
+                AutoShutdownAction = Ini.GetString(Section, "autoShutdownAction", "shutdown") == "restart" ? "restart" : "shutdown";
                 WidgetLocked = Ini.GetBool(Section, "widgetLocked", false);
                 int op = Ini.GetInt(Section, "widgetOpacityPercent", 100);
                 WidgetOpacityPercent = Math.Max(0, Math.Min(100, op));
@@ -327,6 +348,7 @@ namespace PiggyCalendar.WebShell.Services
             try
             {
                 Ini.WriteBool(Section, "widgetVisible", WidgetVisible);
+                Ini.WriteBool(Section, "quoteEnabled", QuoteEnabled);   /* v1.0.2 每日语录开关 */
                 Ini.WriteInt(Section, "widgetPosX", WidgetPosX);
                 Ini.WriteInt(Section, "widgetPosY", WidgetPosY);
                 Ini.WriteInt(Section, "widgetWidth", WidgetWidth);
@@ -342,6 +364,7 @@ namespace PiggyCalendar.WebShell.Services
                 Ini.WriteString(Section, "autoShutdownWeekdays", AutoShutdownWeekdays);
                 Ini.WriteInt(Section, "autoShutdownMonthDay", AutoShutdownMonthDay);
                 Ini.WriteInt(Section, "autoShutdownAdvanceMinutes", AutoShutdownAdvanceMinutes);
+                Ini.WriteString(Section, "autoShutdownAction", AutoShutdownAction);
                 Ini.WriteBool(Section, "widgetLocked", WidgetLocked);
                 Ini.WriteInt(Section, "widgetOpacityPercent", PlainOpacityPercent);   /* 旧键：写纯色值，旧版本回退时行为一致 */
                 Ini.WriteString(Section, "widgetTheme", WidgetTheme);

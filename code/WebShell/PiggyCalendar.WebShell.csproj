@@ -106,6 +106,7 @@
     <Compile Include="Services\CSharpBridge.Reminder.cs" />
     <Compile Include="Services\CSharpBridge.Appearance.cs" />
     <Compile Include="Services\CSharpBridge.ExtraDisplay.cs" />
+    <Compile Include="Services\CSharpBridge.Quote.cs" />
     <Compile Include="Services\AutoShutdownService.cs" />
     <Compile Include="Services\ReminderService.cs" />
     <Compile Include="Services\HolidaySync\SyncSource.cs" />
@@ -185,6 +186,9 @@
     </EmbeddedResource>
     <EmbeddedResource Include="..\WebUI\prototype\modules\panel-store.js">
       <LogicalName>PiggyCalendar.WebShell.webui.modules.panel-store.js</LogicalName>
+    </EmbeddedResource>
+    <EmbeddedResource Include="..\WebUI\prototype\modules\quotes-data.js">
+      <LogicalName>PiggyCalendar.WebShell.webui.modules.quotes-data.js</LogicalName>
     </EmbeddedResource>
     <EmbeddedResource Include="..\WebUI\prototype\assets\app-icon.png">
       <LogicalName>PiggyCalendar.WebShell.webui.assets.app-icon.png</LogicalName>
